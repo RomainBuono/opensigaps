@@ -1,162 +1,160 @@
-<div align="center">
+# OpenSIGAPS — ValoMetric 5.0
 
-# ⚕️ OpenSIGAPS — 1.0
-
-**Estimation de valorisation SIGAPS · Algorithme MERRI 2022 · Aide au choix de journal**
-
-[![Python](https://img.shields.io/badge/Python-3.11+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.42-ff4b4b?logo=streamlit&logoColor=white)](https://streamlit.io)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ed?logo=docker&logoColor=white)](https://docker.com)
-[![License](https://img.shields.io/badge/License-MIT-22c55e)](LICENSE)
-
-![OpenSIGAPS Banner](https://img.shields.io/badge/SIGAPS-MERRI%202022-1e3a5f?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQTEwIDEwIDAgMCAwIDIgMTJhMTAgMTAgMCAwIDAgMTAgMTAgMTAgMTAgMCAwIDAgMTAtMTBBMTAgMTAgMCAwIDAgMTIgMm0tMSAxNXYtNEg3bDUtOXY0aDRsLTUgOXoiLz48L3N2Zz4=)
-
-</div>
+Outil d'estimation de la valorisation SIGAPS MERRI 2022.
+Moteur PubMed + NLP sémantique (multilingual-e5-small).
 
 ---
 
-## À quoi ça sert ?
+## ⚠️ Note sur le référentiel SIGAPS
 
-Les publications scientifiques des médecins hospitaliers sont valorisées financièrement par l'État via le système **SIGAPS** (Système d'Interrogation, de Gestion et d'Analyse des Publications Scientifiques), qui conditionne une part significative des dotations **MERRI** (~61% de la dotation socle).
+Le fichier `sigaps_ref.csv` contient les rangs officiels des journaux SIGAPS.
+Il n'est **pas inclus dans ce dépôt** pour des raisons liées aux droits sur les données.
 
-**OpenSIGAPS** automatise ce qui prend habituellement des heures :
-
-- ✅ Récupérer ses publications depuis **PubMed** en quelques secondes
-- ✅ Calculer ses **scores SIGAPS** (présence, fractionnaire MERRI 2022)
-- ✅ Estimer la **valeur financière annuelle** de sa production
-- ✅ Identifier les **meilleurs journaux cibles** pour ses prochaines soumissions
-
----
-
-## Fonctionnalités
-
-### 🧬 Analyse SIGAPS
-- Recherche automatique sur **PubMed** par nom d'auteur
-- Déduplication et validation manuelle des publications
-- Calcul du **score présence** (C1 × C2) et du **score fractionnaire** (MERRI 2022)
-- Modes **individuel** et **équipe/service**
-- Export **Excel** complet avec synthèse financière
-
-### 🔎 Aide au choix de journal
-- Suggestion de journaux par **similarité sémantique NLP** à partir du titre de l'article
-- Pipeline en 5 niveaux de relaxation sur PubMed (jusqu'à 100 articles analysés)
-- Tri par **rang SIGAPS** (A+ → NC) et **Impact Factor**
-- Recherche par **nom de journal** ou **DOI**
-- Filtres : rang, IF minimum, indexation Medline
-- Export Excel des suggestions · Liens PubMed directs
-
-### 📖 Méthodologie
-- Documentation complète de l'algorithme MERRI 2022
-- Coefficients C1/C2, matrice des scores, exemples numériques
-- Description du moteur NLP et du calcul du score de pertinence
-
----
-
-## Stack technique
-
-| Composant | Technologie |
-|-----------|-------------|
-| Interface | Streamlit 1.42 |
-| NLP — moteur principal | multilingual-e5-small (ONNX int8) |
-| NLP — fallback | SentenceTransformers / Jaccard trigrammes |
-| Inférence | ONNX Runtime (~8 ms/phrase) |
-| API données | PubMed Entrez / NLM Catalog |
-| Visualisation | Plotly |
-| Export | openpyxl (Excel) |
-| Déploiement | Docker multi-stage |
-
----
-
-## Démarrage rapide
-
-### Avec Docker (recommandé)
-
-```bash
-git clone https://github.com/RomainBuono/opensigaps.git
-cd opensigaps
-
-# Ajouter votre référentiel SIGAPS
-cp /chemin/vers/sigaps_ref.csv .
-
-# Build + lancement (première fois ~15 min)
-docker compose up -d
-
-# → http://localhost:8501
-```
-
-### En local (développement)
-
-```bash
-git clone https://github.com/RomainBuono/opensigaps.git
-cd opensigaps
-
-# Avec uv (recommandé)
-uv sync
-uv run streamlit run app.py
-
-# Ou avec pip classique
-pip install -r requirements.txt
-streamlit run app.py
-```
+L'image Docker locale, elle, **l'embarque** — voir la section Build ci-dessous.
 
 ---
 
 ## Structure du projet
 
 ```
-opensigaps/
-├── app.py                 ← Interface Streamlit (2 400 lignes)
-├── backend.py             ← Moteur SIGAPS / PubMed / NLP (1 550 lignes)
-├── main.py                ← Point d'entrée alternatif
-├── clean_sigaps.py        ← Utilitaire nettoyage CSV
-├── .streamlit/
-│   └── config.toml        ← Thème light (navy + Playfair Display)
-├── Dockerfile             ← Build multi-stage avec modèle ONNX embarqué
-├── docker-compose.yml
-└── requirements.txt       ← Dépendances figées
+OpenSIGAPS/
+├── app.py                        ← Interface Streamlit
+├── backend.py                    ← Moteur SIGAPS / PubMed / NLP
+├── main.py                       ← Point d'entrée alternatif
+├── clean_sigaps.py               ← Script nettoyage CSV
+├── pyproject.toml                ← Dépendances (uv)
+├── uv.lock                       ← Lockfile uv
+├── Dockerfile                    ← Image Docker
+├── docker-compose.yml            ← Orchestration
+├── .dockerignore
+├── .python-version
+└── .streamlit/
+    └── config.toml               ← Thème Streamlit
+
+# Fichiers locaux uniquement (non versionnés) :
+├── sigaps_ref.csv                ← Référentiel journaux (privé)
+├── sigaps_ref.emb.npy            ← Cache embeddings (généré automatiquement)
+└── multilingual-e5-small-onnx/  ← Modèle NLP local
 ```
 
 ---
 
-## Algorithme SIGAPS MERRI 2022
+## Prérequis
 
+- **Docker Desktop** installé et démarré
+- Le fichier `sigaps_ref.csv` disponible localement
+- ~4 Go d'espace disque libre, 3 Go de RAM
+
+Vérifier :
+```bash
+docker --version        # 24+
+docker compose version  # 2.x
 ```
-Score Présence    = C1 (position) × C2 (rang revue)
-Score Fractionnaire = (C1_auteur / Σ C1_tous_auteurs) × C2
+
+---
+
+## Build local (avec CSV embarqué)
+
+> Le CSV étant privé, le build se fait **uniquement en local**.
+> L'image produite est autonome et n'a besoin d'aucune connexion pour tourner.
+
+```bash
+# 1. Se placer dans le dossier du projet
+cd OpenSIGAPS/
+
+# 2. Vérifier que le CSV est présent
+ls sigaps_ref.csv
+
+# 3. Builder l'image
+#    → télécharge le modèle NLP (~500 Mo) + installe les dépendances
+#    → première fois : 15-20 min / rebuilds suivants : ~2 min (cache Docker)
+docker build -t opensigaps:5.0 .
+
+# 4. Vérifier que l'image est créée
+docker images | grep opensigaps
 ```
 
-| Position | C1 | | Rang | C2 |
-|----------|----|-|------|-----|
-| 1er / Dernier | 4 | | A+ | 14 |
-| 2ème | 3 | | A | 8 |
-| 3ème | 2 | | B | 6 |
-| ADA (≥6 auteurs) | 3 | | C | 4 |
-| Autre | 1 | | D | 3 |
-| | | | E | 2 |
-| | | | NC | 1 |
+---
 
-> Score maximum : **4 × 14 = 56 pts** (1er auteur, revue A+)  
-> Réforme 2021 : ajout rang A+, position 3ème, position ADA, score fractionnaire
+## Lancer l'application
+
+```bash
+# Démarrer
+docker compose up -d
+
+# Accéder à l'application
+open http://localhost:8501       # Mac
+# ou ouvrir http://localhost:8501 dans le navigateur
+
+# Voir les logs
+docker compose logs -f
+
+# Arrêter
+docker compose down
+```
 
 ---
 
-## Avertissement
+## Figer une version définitive (snapshot)
 
-> OpenSIGAPS est un **outil d'estimation**. La valorisation officielle est effectuée par la plateforme nationale [SIGAPS](https://www.sigaps.fr) et validée par la DRCI de votre établissement. Les rangs affichés sont des approximations à valider avec votre référentiel institutionnel.
+Pour archiver l'état exact de l'application avec ses données :
+
+```bash
+# Builder avec un tag daté
+docker build -t opensigaps:5.0-$(date +%Y%m%d) .
+
+# Exporter en archive autonome
+docker save opensigaps:5.0-$(date +%Y%m%d) | gzip > opensigaps_snapshot_$(date +%Y%m%d).tar.gz
+```
+
+Cette archive `.tar.gz` contient **tout** : code, CSV, modèle NLP, dépendances.
+Rechargeable dans 5 ans sans aucun accès réseau :
+
+```bash
+docker load < opensigaps_snapshot_20250220.tar.gz
+docker run -p 8501:8501 opensigaps:5.0-20250220
+```
 
 ---
 
-## Références
+## Mettre à jour le code sans rebuilder le modèle
 
-- DRCI AP-HP. *Modifications SIGAPS MERRI 2022*. [PDF officiel](https://recherche-innovation.aphp.fr/wp-content/blogs.dir/77/files/2022/04/SIGAPS-Nouveautes-diffusion-V2.pdf)
-- Lepage E. *et al.* (2015). SIGAPS score and medical publication evaluation system. *IRBM*, 36(2). [DOI](https://doi.org/10.1016/j.irbm.2015.01.006)
-- Wang L. *et al.* (2024). Multilingual E5 Text Embeddings. *Microsoft Research*. [arXiv:2402.05672](https://arxiv.org/abs/2402.05672)
+Grâce au cache Docker multi-étapes, modifier `app.py` ou `backend.py` ne
+retélécharge pas le modèle NLP :
+
+```bash
+# Modifier le code, puis :
+docker build -t opensigaps:5.0 .   # ~2 min (le modèle est en cache)
+docker compose up -d --force-recreate
+```
 
 ---
 
-<div align="center">
+## Commandes utiles
 
-Fait avec ☕ et beaucoup de PubMed API calls
+```bash
+# État du conteneur
+docker compose ps
 
-</div>
+# Entrer dans le conteneur (debug)
+docker exec -it opensigaps bash
 
+# Consommation mémoire
+docker stats opensigaps
+
+# Supprimer l'image et repartir de zéro
+docker compose down --rmi all
+docker system prune -f
+```
+
+---
+
+## Résolution des problèmes courants
+
+| Symptôme | Cause | Solution |
+|----------|-------|----------|
+| `Port 8501 already in use` | Port occupé | `docker compose down` ou changer le port dans `docker-compose.yml` |
+| `sigaps_ref.csv: not found` | CSV manquant au build | Vérifier qu'il est bien dans le dossier avant `docker build` |
+| Modèle NLP non chargé | Réseau coupé pendant le build | `docker build --no-cache .` |
+| Erreur mémoire au démarrage | RAM insuffisante | Allouer 3+ Go dans Docker Desktop → Préférences → Resources |
+| Build très lent (1ère fois) | Téléchargement modèle 500 Mo | Normal — les rebuilds suivants sont rapides |
