@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.env
+# Fichiers système
+.DS_Store
+sigaps.txt
+sigaps_ref.csv
+sigaps_ref.emb.ids
+sigaps_ref.emb.npymultilingual-e5-small-onnx/
+sigaps_ref.csv
+*.emb.npy
+*.emb.ids
+*.csv
