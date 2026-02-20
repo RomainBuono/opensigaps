@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚕️ OpenSIGAPS — ValoMetric 5.0
+# ⚕️ OpenSIGAPS — 1.0
 
 **Estimation de valorisation SIGAPS · Algorithme MERRI 2022 · Aide au choix de journal**
 
@@ -159,3 +159,4 @@ Score Fractionnaire = (C1_auteur / Σ C1_tous_auteurs) × C2
 Fait avec ☕ et beaucoup de PubMed API calls
 
 </div>
+
