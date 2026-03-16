@@ -1,10 +1,12 @@
 # Python-generated files
 __pycache__/
+.pytest_cache/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
+data/
 
 # Virtual environments
 .venv
@@ -19,3 +21,7 @@ sigaps_ref.csv
 *.emb.npy
 *.emb.ids
 *.csv
+Dockerfile
+docker-compose.yml
+test*.+.py
+.dockerignore

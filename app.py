@@ -3,10 +3,18 @@ app.py — OpenSIGAPS v5
 Interface Streamlit — 3 onglets :
   🔬 Analyse individuelle  |  👥 Équipe / Service  |  📖 Méthodologie
 """
+import os
+from dotenv import load_dotenv
+
+from src.repositories import SigapsRepository
+from src.fetchers import PubMedFetcher as SrcPubMedFetcher, ScopusFetcher as SrcScopusFetcher
+from src.nlp import E5QueryProcessor, CosineSemanticRanker, HierarchicalDomainInference
+from src.services import JournalRecommendationService
 
 import io
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -16,27 +24,27 @@ from plotly.subplots import make_subplots
 from backend import (
     C1_COEFFICIENTS,
     C2_COEFFICIENTS,
-    CASCADE_LEVEL_LABELS,
     SIGAPS_MATRIX,
     VALEUR_POINT_EUROS,
     Article,
-    FederatedSearch,  # alias de PubMedFetcher dans v7
+    FederatedSearch,
+    PubMedFetcher,
     SigapsRefDB,
+    _filter_by_affiliation,
     calculate_fractional_score,
     calculate_presence_score,
     calculate_team_presence_score,
+    detect_article_domain,
     fetch_article_by_doi,
     load_embed_model,
     search_journal_by_name,
     set_embed_model,
     set_ref_db,
-    suggest_journals_by_title,
 )
 
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-
 st.set_page_config(page_title="OpenSIGAPS", page_icon="🧬", layout="wide")
 
 st.markdown(
@@ -339,13 +347,13 @@ p, li { font-family: var(--font-body) !important; color: var(--text-secondary) !
     width: 20px !important; height: 20px !important;
     flex-shrink: 0 !important;
     color: var(--blue) !important;
-    font-size: 0 !important;           /* cache le texte _arrow si présent */
+    font-size: 0 !important;            /* cache le texte _arrow si présent */
     line-height: 0 !important;
 }
 [data-testid="stExpanderToggleIcon"] svg {
     width: 16px !important; height: 16px !important;
     fill: var(--blue) !important; color: var(--blue) !important;
-    font-size: initial !important;     /* SVG hérite normalement */
+    font-size: initial !important;      /* SVG hérite normalement */
 }
 [data-testid="stExpander"] details > summary > div,
 [data-testid="stExpander"] details > summary > div > p {
@@ -528,87 +536,6 @@ input[type="checkbox"] { accent-color: var(--blue) !important; }
 .block-container > div > div > div:nth-child(4) { animation-delay: 0.18s; }
 .block-container > div > div > div:nth-child(5) { animation-delay: 0.24s; }
 
-/* ═══════════════════════════════════════════════════════════════
-   SIDEBAR — labels, help icon, sliders
-════════════════════════════════════════════════════════════════ */
-/* Labels (toutes les variantes Streamlit) */
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
-[data-testid="stSidebar"] [data-testid="stWidgetLabel"] label,
-[data-testid="stSidebar"] .stSlider label,
-[data-testid="stSidebar"] .stNumberInput label,
-[data-testid="stSidebar"] .stTextInput label {
-    color: rgba(255,255,255,0.88) !important;
-    font-family: var(--font-body) !important;
-    font-size: 0.76rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.07em !important;
-    text-transform: uppercase !important;
-}
-
-/* Help icon — sélecteur universel : TOUS les boutons de la sidebar
-   sauf les steppers +/- du number_input (identifiés par aria-label) */
-[data-testid="stSidebar"] button {
-    background: transparent !important;
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-}
-/* Steppers +/- : rétablir un fond minimal pour qu'ils soient visibles */
-[data-testid="stSidebar"] button[aria-label="Increment"],
-[data-testid="stSidebar"] button[aria-label="Decrement"],
-[data-testid="stSidebar"] [data-testid="stNumberInput"] button {
-    background: rgba(255,255,255,0.10) !important;
-    border: 1px solid rgba(255,255,255,0.18) !important;
-    color: #ffffff !important;
-}
-/* SVG du help icon : couleur discrète */
-[data-testid="stSidebar"] [data-testid="stTooltipIcon"] svg,
-[data-testid="stSidebar"] [data-testid="stTooltipIcon"] svg path,
-[data-testid="stSidebar"] [data-testid="stTooltipIcon"] svg circle {
-    color: rgba(255,255,255,0.50) !important;
-    fill: rgba(255,255,255,0.50) !important;
-    stroke: rgba(255,255,255,0.50) !important;
-}
-/* Slider ticks & valeurs */
-[data-testid="stSidebar"] .stSlider [data-testid="stThumbValue"],
-[data-testid="stSidebar"] .stSlider p,
-[data-testid="stSidebar"] .stSlider span { color: rgba(255,255,255,0.80) !important; }
-
-/* ═══════════════════════════════════════════════════════════════
-   ONGLETS — texte actif blanc
-════════════════════════════════════════════════════════════════ */
-.stTabs [data-baseweb="tab"][aria-selected="true"],
-.stTabs [data-baseweb="tab"][aria-selected="true"] p,
-.stTabs [data-baseweb="tab"][aria-selected="true"] span,
-.stTabs [data-baseweb="tab"][aria-selected="true"] div,
-.stTabs [role="tab"][aria-selected="true"],
-.stTabs [role="tab"][aria-selected="true"] * {
-    color: #ffffff !important;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   BOUTONS — texte blanc (gradient navy→blue)
-════════════════════════════════════════════════════════════════ */
-div.stButton > button,
-div.stButton > button p,
-div.stButton > button span,
-div.stButton > button div,
-div.stButton > button * { color: #ffffff !important; }
-/* Download button ghost (texte bleu) */
-div[data-testid="stDownloadButton"] > button,
-div[data-testid="stDownloadButton"] > button * { color: var(--blue) !important; }
-
-/* ═══════════════════════════════════════════════════════════════
-   ZONE TRI/FILTRES — compacte
-════════════════════════════════════════════════════════════════ */
-/* Toggle compact */
-[data-testid="stToggle"] { transform: scale(0.82); transform-origin: left center; }
-/* Selectbox réduit */
-.filter-row [data-baseweb="select"] > div { min-height: 34px !important; font-size: 0.82rem !important; }
-/* Labels filter invisibles */
-.filter-row label { display: none !important; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -616,6 +543,117 @@ div[data-testid="stDownloadButton"] > button * { color: var(--blue) !important; 
 
 ALL_POSITIONS = ["1er", "2ème", "3ème", "ADA", "Dernier", "Autre"]
 ALL_RANKS = ["A+", "A", "B", "C", "D", "E", "NC"]
+
+
+# ─────────────────────────────────────────────
+# HELPERS UI (Fonctions globales d'affichage)
+# ─────────────────────────────────────────────
+
+def _rank_badge(rank: str, source: str, impact_factor: str = "") -> str:
+    RANK_COLORS = {
+        "A+": ("#ffffff", "#c8921a", "rgba(200,146,26,0.13)"),
+        "A": ("#0f1e35", "#2563eb", "rgba(37,99,235,0.10)"),
+        "B": ("#0f1e35", "#0f766e", "rgba(15,118,110,0.10)"),
+        "C": ("#2d4163", "#6b7fa3", "rgba(107,127,163,0.10)"),
+        "D": ("#0f1e35", "#b45309", "rgba(180,83,9,0.10)"),
+        "E": ("#0f1e35", "#be123c", "rgba(190,18,60,0.10)"),
+        "NC": ("#6b7fa3", "#a8b8d8", "rgba(168,184,216,0.12)"),
+    }
+    txt, border, bg = RANK_COLORS.get(rank, ("#dde4f0", "#8a9bbf", "rgba(138,155,191,0.12)"))
+    if impact_factor:
+        src_label = f"IF {impact_factor}"
+        src_color = "#b8860b"
+    elif source == "csv":
+        src_label = "Valeur réelle"
+        src_color = "#059669"
+    else:
+        src_label = "〜 estimé"
+        src_color = "#d97706"
+    return (
+        f'<span style="display:inline-block;padding:4px 12px;border-radius:20px;'
+        f"background:{bg};border:1px solid {border};color:{border};"
+        f"font-family:JetBrains Mono,monospace;font-weight:700;font-size:1.1rem;"
+        f'letter-spacing:0.04em;">{rank}</span>'
+        f'&nbsp;<span style="font-size:0.72rem;color:{src_color};'
+        f'font-family:DM Sans,sans-serif;font-weight:600;">{src_label}</span>'
+    )
+
+def _score_card(rank: str, position: str, nb_authors: int, valeur: float) -> str:
+    from backend import calculate_presence_score, calculate_fractional_score, C1_COEFFICIENTS, C2_COEFFICIENTS
+    p_pts = calculate_presence_score(position, rank)
+    f_pts = calculate_fractional_score(position, rank, nb_authors)
+    annual = p_pts * valeur
+    c1 = C1_COEFFICIENTS.get(position, 1)
+    c2 = C2_COEFFICIENTS.get(rank, 1)
+    return (
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px;">'
+        f'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:2px solid #b8860b;border-radius:10px;padding:14px 16px;">'
+        f'<div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#6b7fa3;margin-bottom:4px;">C1 × C2</div>'
+        f'<div style="font-family:JetBrains Mono,monospace;font-size:1.15rem;color:#1e3a5f;">{c1} × {c2}</div></div>'
+        f'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:2px solid #b8860b;border-radius:10px;padding:14px 16px;">'
+        f'<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#48587a;margin-bottom:4px;">Pts Présence</div>'
+        f'<div style="font-family:JetBrains Mono,monospace;font-size:1.6rem;font-weight:600;color:#b8860b;">{p_pts:.0f}</div></div>'
+        f'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:2px solid #2563eb;border-radius:10px;padding:14px 16px;">'
+        f'<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#48587a;margin-bottom:4px;">Pts Fractionnaire</div>'
+        f'<div style="font-family:JetBrains Mono,monospace;font-size:1.6rem;font-weight:600;color:#2563eb;">{f_pts:.2f}</div></div>'
+        f'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:2px solid #059669;border-radius:10px;padding:14px 16px;">'
+        f'<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#48587a;margin-bottom:4px;">Valeur annuelle</div>'
+        f'<div style="font-family:JetBrains Mono,monospace;font-size:1.6rem;font-weight:600;color:#059669;">{annual:,.0f} €</div></div>'
+        f"</div>"
+    )
+
+def _journal_card(jr, position: str, nb_authors: int, show_similarity: bool = False, expanded_calc: bool = False, separator: bool = False) -> None:
+    import streamlit as st
+    
+    j_rank = getattr(jr, "rank_sigaps", getattr(jr, "rank", "NC"))
+    j_sim = getattr(jr, "similarity_score", getattr(jr, "similarity", 0.0))
+    j_count = getattr(jr, "matched_articles_count", getattr(jr, "article_count", 0))
+    
+    nlm_display = jr.nlm_id or "—"
+    issn_display = getattr(jr, "issn", "") or "—"
+    country = getattr(jr, "country", "")
+    
+    medline_tag = getattr(jr, "medline_indexed", "")
+
+    _left_border = "#b8860b" if j_rank in ("A+", "A") else "#2563eb" if j_rank == "B" else "#94a3b8"
+    
+    _medline_span = ""
+    if medline_tag:
+        m_color = "#2ec98a" if medline_tag.lower().startswith("o") else "#e05c6e"
+        _medline_span = f'<span style="font-size:0.7rem;font-weight:600;color:{m_color};">Medline&nbsp;{medline_tag}</span>'
+
+    _sim_bar = ""
+    if show_similarity:
+        pct = int(j_sim * 100)
+        bar_color = "#e8cc7a" if pct >= 70 else "#4a90e2" if pct >= 40 else "#8a9bbf"
+        _sim_bar = (
+            f'<div style="margin-top:10px;">'
+            f'<div style="display:flex;justify-content:space-between;font-size:0.68rem;color:#94a3b8;margin-bottom:3px;">'
+            f"<span>Score de pertinence</span>"
+            f'<span style="color:{bar_color};font-weight:700;">{pct}%&nbsp;·&nbsp;{j_count} article(s)</span>'
+            f'</div>'
+            f'<div style="background:#e2e8f0;border-radius:99px;height:5px;overflow:hidden;">'
+            f'<div style="width:{pct}%;height:100%;background:{bar_color};border-radius:99px;"></div>'
+            f"</div></div>"
+        )
+
+    st.markdown(
+        f'<div style="background:#ffffff;border:1px solid #dde6f5;border-left:4px solid {_left_border};border-radius:12px;padding:18px 22px;margin-bottom:8px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+        f'<div style="flex:1;"><div style="font-family:Playfair Display,serif;font-size:1.15rem;font-weight:600;color:#1e3a5f;margin-bottom:6px;">{jr.journal_name}</div>'
+        f'<div style="display:flex;gap:16px;align-items:center;"><span style="font-size:0.72rem;color:#94a3b8;">NLM_ID&nbsp;<b style="color:#64748b;">{nlm_display}</b></span>{_medline_span}</div>'
+        f"{_sim_bar}</div>"
+        f'<div style="text-align:right;">{_rank_badge(j_rank, getattr(jr, "rank_source", "csv"), getattr(jr, "impact_factor", ""))}</div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander(f"Score SIGAPS — position : {position} · {nb_authors} auteurs", expanded=expanded_calc):
+        st.markdown(_score_card(j_rank, position, nb_authors, valeur_point), unsafe_allow_html=True)
+        
+    if separator:
+        st.markdown('<div style="height:1px;background:#dde6f5;margin:6px 0 12px;"></div>', unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────
 # MODÈLE D'EMBEDDING — ONNX > PyTorch > Jaccard
@@ -626,6 +664,33 @@ ALL_RANKS = ["A+", "A", "B", "C", "D", "E", "NC"]
 def _load_embed_model():
     """Délègue au sélecteur de backend dans backend.py. Retourne (model, backend_str)."""
     return load_embed_model()
+
+
+# ─────────────────────────────────────────────
+# MOTEUR D'INFÉRENCE DOMAINE — chargement optionnel
+# Nécessite domain_inference.py dans le même dossier.
+# Si absent : domain_engine = None → comportement v8.1 inchangé.
+# ─────────────────────────────────────────────
+
+
+@st.cache_resource(show_spinner="Chargement du moteur d'inférence domaine…")
+def _load_domain_engine():
+    try:
+        from src.nlp import HierarchicalDomainInference
+        from backend import get_embed_model
+
+        _model_local = get_embed_model()
+        engine = HierarchicalDomainInference(embed_model=_model_local)
+
+        return engine, True
+    except Exception as _exc:
+        import streamlit as st
+        st.error(f"🚨 Erreur critique lors du chargement NLP : {_exc}")
+        import logging
+        logging.getLogger(__name__).info(
+            "domain_inference non disponible (%s) — suggestion sans boost thématique", _exc
+        )
+        return None, False
 
 
 # ─────────────────────────────────────────────
@@ -641,11 +706,14 @@ def _load_ref_db(csv_path: str) -> SigapsRefDB:
 
 
 # Chemin par défaut : même dossier que app.py
-_CSV_PATH = str(Path(__file__).parent / "sigaps_ref.csv")
+_CSV_PATH = str(Path(__file__).parent / "data" / "processed" / "sigaps_ref.csv")
 
 # ── Chargement du modèle
 _embed_model, _embed_backend = _load_embed_model()
 set_embed_model(_embed_model, _embed_backend)
+
+# ── Chargement du moteur d'inférence domaine (après set_embed_model)
+_domain_engine, _domain_engine_ready = _load_domain_engine()
 
 if Path(_CSV_PATH).exists():
     _ref_db = _load_ref_db(_CSV_PATH)
@@ -669,6 +737,32 @@ else:
     _ref_db = SigapsRefDB()
     _CSV_STATUS = (False, 0, "")
 
+@st.cache_resource(show_spinner="Initialisation du chef d'orchestre NLP...")
+def setup_recommendation_service(_model, _engine, _db_path):
+    load_dotenv()
+    
+    # On initialise le repository avec le chemin du CSV
+    repo = SigapsRepository(
+        csv_path=_db_path, 
+        npy_path=str(_db_path).replace('.csv', '.emb.npy'), 
+        ids_path=str(_db_path).replace('.csv', '.emb.ids')
+    ).load_all()
+    
+    # On connecte le NLP
+    processor = E5QueryProcessor(embedder=_model, domain_engine=_engine)
+    ranker = CosineSemanticRanker(embedder=_model, sigaps_repo=repo)
+    
+    # On connecte les API externes
+    fetchers = [
+        SrcPubMedFetcher(api_key=os.getenv("NCBI_API_KEY")), 
+        SrcScopusFetcher(api_key=os.getenv("SCOPUS_API_KEY"))
+    ]
+    
+    return JournalRecommendationService(processor, fetchers, ranker)
+
+# On lance le service en lui donnant le modèle E5 et le moteur de domaine qui viennent d'être chargés juste au-dessus !
+new_recommendation_service = setup_recommendation_service(_embed_model, _domain_engine, _CSV_PATH)
+
 # ─────────────────────────────────────────────
 # SESSION STATE
 # ─────────────────────────────────────────────
@@ -683,6 +777,8 @@ if "raw_suggestions" not in st.session_state:
     st.session_state.raw_suggestions: list = []
 if "suggest_query_cache" not in st.session_state:
     st.session_state.suggest_query_cache: str = ""
+if "domain_report" not in st.session_state:
+    st.session_state.domain_report: Optional[dict] = None
 
 # ─────────────────────────────────────────────
 # SIDEBAR
@@ -690,17 +786,17 @@ if "suggest_query_cache" not in st.session_state:
 
 with st.sidebar:
     st.title("⚙️ OpenSIGAPS")
-    st.caption("SIGAPS · MERRI 2022 · PubMed")
+    st.caption("SIGAPS · MERRI 2022 · PubMed · Scopus")
     st.markdown("---")
 
     valeur_point = st.number_input(
         "Valeur du Point SIGAPS (€)",
         value=VALEUR_POINT_EUROS,
         step=10,
-        help="Valeur annuelle fixée par votre établissement.",
+        help="Valeur annuelle fixée par votre établissement. Vérifiez avec votre DRCI.",
     )
 
-    institution_filter = None
+    institution_filter = None  # OpenAlex supprimé en v7
 
     current_year = datetime.now().year
     year_range = st.slider(
@@ -754,12 +850,40 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+    # ── Statut moteur d'inférence domaine ──
+    if _domain_engine_ready:
+        _di_label = "🎯 domain inference actif"
+        _di_color = "#a78bfa"
+        _di_sub = "Surpondération thématique + Scopus topique"
+    else:
+        _di_label = "⬜ domain inference inactif"
+        _di_color = "rgba(255,255,255,0.35)"
+        _di_sub = "Placez domain_inference.py dans le dossier"
+    st.markdown(
+        f"<div style='background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.14);"
+        f"border-radius:8px;padding:8px 13px;margin-top:6px;"
+        f"font-size:0.74rem;color:rgba(255,255,255,0.7);'>"
+        f"<b style='color:{_di_color};'>{_di_label}</b><br>"
+        f"<span style='color:rgba(255,255,255,0.4);font-size:0.70rem;'>{_di_sub}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
 # ─────────────────────────────────────────────
-# ONGLETS
+# DESCRIPTION ET ONGLETS
 # ─────────────────────────────────────────────
 
-tab_analyse, tab_journal, tab_methodo = st.tabs(
-    ["🧬 Analyse SIGAPS", "🔎 Quel journal choisir ?", "📖 Méthodologie"]
+st.markdown(
+    "**OpenSIGAPS** est une plateforme d'aide à la décision conçue pour les chercheurs et "
+    "les directions de la recherche. Elle permet d'estimer instantanément la valorisation "
+    "scientifique (Impact Factor)et financière (MERRI) de vos publications et d'identifier par IA "
+    "les journaux les plus stratégiques pour soumettre vos futurs manuscrits."
+)
+
+st.write("")
+
+tab_journal, tab_analyse, tab_methodo = st.tabs(
+    ["🔎 Quel journal choisir ?","🧬 Analyse SIGAPS",  "📖 Méthodologie"]
 )
 
 
@@ -820,28 +944,89 @@ with tab_analyse:
         with col2:
             search_btn = st.button("🚀 Lancer l'analyse", use_container_width=True)
 
-        if search_btn and researcher_name:
-            search_service = FederatedSearch(ref_db=_ref_db)
-            with st.spinner("Interrogation PubMed en cours…"):
-                results = search_service.search(
-                    researcher_name, institution_filter=institution_filter
+        # Champs optionnels anti-homonymes (repliés par défaut)
+        with st.expander(
+            "🏥 Préciser l'affiliation pour éviter les homonymes (optionnel)"
+        ):
+            _aff_col1, _aff_col2 = st.columns(2)
+            with _aff_col1:
+                affiliation_filter = st.text_input(
+                    "Établissement / Affiliation",
+                    placeholder="Ex: Centre Léon Bérard, Hospices Civils de Lyon",
+                    help=(
+                        "Filtrage post-récupération : seuls les articles dont "
+                        "au moins une affiliation contient ce terme seront conservés. "
+                        "Laissez vide pour ne pas filtrer."
+                    ),
+                    key="individuel_affiliation",
                 )
+            with _aff_col2:
+                city_filter = st.text_input(
+                    "Ville professionnelle",
+                    placeholder="Ex: Lyon, Paris, Bordeaux",
+                    help="Combiné à l'affiliation pour affiner la discrimination.",
+                    key="individuel_city",
+                )
+
+        if search_btn and researcher_name:
+            if len(researcher_name) > 80:
+                st.error(
+                    f"⚠️ Le nom saisi est trop long ({len(researcher_name)} caractères). "
+                    "Veuillez saisir un nom de chercheur, pas un titre d'article."
+                )
+                st.stop()
+            if len(researcher_name.split()) > 5:
+                st.warning(
+                    "⚠️ Un nom de chercheur contient généralement 2 à 3 mots. "
+                    "Vérifiez votre saisie."
+                )
+            search_service = FederatedSearch(ref_db=_ref_db)
+            with st.spinner("Interrogation PubMed + Scopus en cours…"):
+                results = search_service.search(researcher_name, limit_per_source=500)
+                # ── Filtrage anti-homonyme si renseigné ───────────────────────
+                affiliation_filter = st.session_state.get(
+                    "individuel_affiliation", ""
+                ).strip()
+                city_filter = st.session_state.get("individuel_city", "").strip()
+
+                if affiliation_filter or city_filter:
+                    results = _filter_by_affiliation(
+                        results, affiliation_filter, city_filter, researcher_name
+                    )
+                    st.info(
+                        f"🏥 Filtre affiliation actif : « {affiliation_filter} »"
+                        + (f" · ville : « {city_filter} »" if city_filter else "")
+                        + f" → {len(results)} articles retenus."
+                    )
+                total_pubmed = len(results)
+                results.sort(key=lambda x: x.publication_year, reverse=True)
                 st.session_state.articles_data = results
 
             if not results:
                 st.error("Aucune publication trouvée. Vérifiez l'orthographe.")
             else:
-                st.success(f"✅ **{len(results)} articles** récupérés via PubMed")
+                if total_pubmed > len(results):
+                    st.success(
+                        f"✅ **{len(results)} articles** récupérés "
+                        f"(PubMed en recense **{total_pubmed}** au total — "
+                        f"limite fixée à 500 pour les performances)"
+                    )
+                else:
+                    st.success(f"✅ **{len(results)} articles** récupérés via PubMed")
 
         if st.session_state.articles_data:
             st.divider()
 
             data_for_df = []
+            articles_hors_periode = 0
             for a in st.session_state.articles_data:
                 in_range = year_range[0] <= a.publication_year <= year_range[1]
+                if not in_range:
+                    articles_hors_periode += 1
+                    continue  # ← exclusion de l'affichage (comme mode Équipe)
                 data_for_df.append(
                     {
-                        "is_selected": a.is_selected and in_range,
+                        "is_selected": a.is_selected,
                         "title": a.title,
                         "journal_name": a.journal_name,
                         "publication_year": a.publication_year,
@@ -856,6 +1041,12 @@ with tab_analyse:
                         "nlm_id": getattr(a, "nlm_unique_id", ""),
                         "authors_str": "; ".join(a.authors_list[:5]),
                     }
+                )
+            if articles_hors_periode > 0:
+                st.caption(
+                    f"ℹ️ {articles_hors_periode} article(s) hors de la fenêtre "
+                    f"{year_range[0]}–{year_range[1]} masqué(s). "
+                    "Ajustez le curseur latéral pour les afficher."
                 )
 
             df_source = pd.DataFrame(data_for_df)
@@ -923,7 +1114,7 @@ with tab_analyse:
                     "nlm_id": None,
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 height=_height,
             )
 
@@ -1007,9 +1198,7 @@ with tab_analyse:
                                 }
                             )
                 if detail:
-                    st.dataframe(
-                        pd.DataFrame(detail), use_container_width=True, hide_index=True
-                    )
+                    st.dataframe(pd.DataFrame(detail), width="stretch", hide_index=True)
 
             st.divider()
             st.subheader("📥 Export")
@@ -1102,6 +1291,28 @@ with tab_analyse:
             "Saisissez les noms des membres de votre équipe (un par ligne). "
             "Chaque chercheur sera interrogé individuellement, puis les résultats seront consolidés."
         )
+        # Champs optionnels anti-homonymes pour l'équipe entière
+        with st.expander(
+            "🏥 Filtrer par affiliation commune (optionnel — recommandé pour les équipes)"
+        ):
+            _taff_col1, _taff_col2 = st.columns(2)
+            with _taff_col1:
+                team_affiliation = st.text_input(
+                    "Établissement / Affiliation commune",
+                    placeholder="Ex: Hôpital Lariboisière, APHP",
+                    key="team_affiliation",
+                )
+            with _taff_col2:
+                team_city = st.text_input(
+                    "Ville",
+                    placeholder="Ex: Paris",
+                    key="team_city",
+                )
+            if team_affiliation or team_city:
+                st.caption(
+                    "⚠️ Ce filtre interroge l'API Entrez pour récupérer les affiliations — "
+                    "il allonge légèrement la durée de recherche."
+                )
 
         default_team = st.session_state.get("team_names_input", "")
         team_names_raw = st.text_area(
@@ -1118,11 +1329,11 @@ with tab_analyse:
         with col_btn1:
             team_search_btn = st.button(
                 f"🚀 Analyser l'équipe ({len(team_names)} membre{'s' if len(team_names) != 1 else ''})",
-                use_container_width=True,
+                width="stretch",
                 disabled=(len(team_names) == 0),
             )
         with col_btn2:
-            if st.button("🗑️ Réinitialiser", use_container_width=True):
+            if st.button("🗑️ Réinitialiser", width="stretch"):
                 st.session_state.team_results = {}
                 st.session_state.team_member_arts = {}
                 st.rerun()
@@ -1138,8 +1349,13 @@ with tab_analyse:
                     text=f"Recherche : {name} ({i + 1}/{len(team_names)})…",
                 )
                 results = search_service.search(
-                    name, institution_filter=institution_filter
+                    name, institution_filter=institution_filter, limit_per_source=500
                 )
+                # ── Filtre affiliation équipe ──────────────────────────────────
+                _t_aff = st.session_state.get("team_affiliation", "").strip()
+                _t_city = st.session_state.get("team_city", "").strip()
+                if _t_aff or _t_city:
+                    results = _filter_by_affiliation(results, _t_aff, _t_city, name)
                 # Filtre fenêtre temporelle et sélection
                 filtered = [
                     a
@@ -1285,7 +1501,7 @@ with tab_analyse:
                     # rank_source est visible, pas caché
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 height=480,
             )
 
@@ -1367,7 +1583,7 @@ with tab_analyse:
                 if detail_team:
                     st.dataframe(
                         pd.DataFrame(detail_team),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
 
@@ -1427,9 +1643,7 @@ with tab_analyse:
                     }
                 )
 
-            st.dataframe(
-                pd.DataFrame(indiv_data), use_container_width=True, hide_index=True
-            )
+            st.dataframe(pd.DataFrame(indiv_data), width="stretch", hide_index=True)
 
             # ── Articles co-signés (filtrés sur validés) ──
             with st.expander("Articles co-signés par plusieurs membres"):
@@ -1461,7 +1675,7 @@ with tab_analyse:
                                 for r in co_signed
                             ]
                         ),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
                 else:
@@ -1833,10 +2047,10 @@ Un chercheur avec les publications suivantes (fenêtre 4 ans) :
 | Position | Rang | Score Présence | Score Frac (n=8 auteurs) |
 |----------|------|---------------|--------------------------|
 | 1er      | A+   | 4 × 14 = **56 pts** | (4/19) × 14 = **2,95 pts** |
-| Dernier  | A    | 4 × 8 = **32 pts**  | (4/19) × 8 = **1,68 pts**  |
-| 2ème     | B    | 3 × 6 = **18 pts**  | (3/19) × 6 = **0,95 pts**  |
-| ADA      | C    | 3 × 4 = **12 pts**  | (3/19) × 4 = **0,63 pts**  |
-| Autre    | C    | 1 × 4 = **4 pts**   | (1/19) × 4 = **0,21 pts**  |
+| Dernier  | A    | 4 × 8 = **32 pts** | (4/19) × 8 = **1,68 pts** |
+| 2ème     | B    | 3 × 6 = **18 pts** | (3/19) × 6 = **0,95 pts** |
+| ADA      | C    | 3 × 4 = **12 pts** | (3/19) × 4 = **0,63 pts** |
+| Autre    | C    | 1 × 4 = **4 pts** | (1/19) × 4 = **0,21 pts** |
 
 Σ C1 pour n=8 auteurs : 4+3+2+(3×1)+3+4 = 19.
 
@@ -1849,53 +2063,54 @@ L'onglet **🔎 Quel journal choisir ?** intègre un moteur de suggestion séman
 à partir du titre d'un article en préparation, d'identifier les journaux SIGAPS les plus pertinents
 pour sa soumission.
 
-#### Architecture du pipeline
+#### Architecture du pipeline de données
 
-**Étape 1 — Recherche PubMed (cascade de relaxation)**
+**Étape 1 — Recherche Fédérée (PubMed + Scopus)**
 
-Le titre est interrogé sur PubMed via l'API Entrez (esearch), selon une cascade de 5 niveaux progressivement
-moins restrictifs :
+Le titre soumis est d'abord "purifié" par le système (retrait des stopwords et du jargon méthodologique pour isoler l'essence biomédicale).
+Il est ensuite envoyé simultanément à deux bases de données via notre orchestrateur de recherche :
+* **PubMed (API Entrez) :** L'algorithme utilise une stratégie d'élargissement dynamique ("Smart Fetching"). Il cherche d'abord la combinaison stricte des mots-clés, puis élargit progressivement sa requête jusqu'à accumuler un volume de contexte suffisant (minimum 50 articles) pour garantir la pertinence statistique.
+* **Scopus (API Elsevier) :** Vient enrichir le corpus pour capter des publications pertinentes non exclusives à Medline.
 
-| Niveau | Requête | Champ | Seuil de déclenchement |
-|--------|---------|-------|------------------------|
-| 1 | Titre complet | `[Title/Abstract]` | < 15 résultats → niveau suivant |
-| 2 | Termes médicaux clés (AND) | `[Title/Abstract]` | < 15 résultats → niveau suivant |
-| 3 | 2 termes spécifiques (AND) | Tous champs | < 15 résultats → niveau suivant |
-| 4 | Termes clés (OR) | Tous champs | < 15 résultats → niveau suivant |
-| 5 | Terme le plus spécifique | Tous champs | Toujours utilisé |
+Les articles en doublon (identifiés par leur DOI ou leur titre) sont fusionnés pour créer un pool candidat unique et propre.
 
-Les stopwords médicaux génériques (*study*, *analysis*, *patient*…) sont exclus de l'extraction.
-Jusqu'à **100 articles similaires** sont récupérés. La meilleure récolte est conservée entre les niveaux.
+**Étape 2 — Inférence de Domaine et Encodage Sémantique**
 
-**Étape 2 — Encodage sémantique**
+* **Détection du domaine :** L'algorithme analyse le titre pour détecter la grande famille clinique (ex: Oncologie, Hématologie) à l'aide d'un moteur d'inférence hiérarchique.
+* **Vectorisation :** Chaque titre (requête + articles récupérés) est encodé en un vecteur dense de 384 dimensions par **multilingual-e5-small** (Microsoft, 2023), un modèle Transformer multilingue optimisé pour la similarité de phrases. Le backend ONNX Runtime permet une inférence ultra-rapide (~8 ms par phrase).
 
-Chaque titre (requête + articles PubMed) est encodé en vecteur dense de 384 dimensions via
-**multilingual-e5-small** (Microsoft, 2023), un modèle transformer multilingue compact optimisé
-pour la similarité de phrases. En l'absence du modèle, un fallback **Jaccard trigrammes** est utilisé.
-Le backend ONNX Runtime (quantification int8) réduit le temps d'inférence de ~30 ms à ~8 ms par phrase.
+**Étape 3 — Agrégation et Boost Thématique**
 
-**Étape 3 — Calcul du score de pertinence**
+La similarité cosinus est calculée entre le vecteur du titre soumis et chacun des vecteurs des articles candidats : `sim(article) = cos(v_requête, v_article)`.
 
-La similarité cosinus est calculée entre le vecteur du titre soumis et chacun des vecteurs d'articles PubMed :
+Les scores sont ensuite agrégés par journal en s'appuyant sur des clés primaires strictes (`NLM_ID` pour les articles PubMed, `ISSN` ou nom de la revue pour Scopus). 
+Le système applique ici un **Boost Thématique** : si l'empreinte mathématique globale du journal est fortement alignée avec le domaine clinique détecté à l'Étape 2, le score de ses articles est bonifié.
 
-> **sim(article_i)** = cos(v_requête, v_article_i) = v_requête · v_article_i (vecteurs L2-normalisés)
+> **score_brut(journal)** = Σ [ sim(article) × (1 + boost_thématique) ]
 
-Les similarités sont agrégées par journal :
+Le **score de pertinence affiché (%)** est la normalisation de ce score brut par rapport au meilleur journal du corpus.
 
-> **score_brut(journal_j)** = Σ sim(article_i) pour tous les articles i publiés dans le journal j
+**Étape 4 — Réconciliation SIGAPS et Filtrage**
 
-Le **score de pertinence affiché (%)** est la normalisation de ce score brut :
+La liste des journaux générée par l'Intelligence Artificielle est confrontée au référentiel officiel `sigaps_ref.csv`. La jointure est réalisée de manière déterministe (priorité absolue au NLM_ID) pour garantir l'exactitude du Rang SIGAPS, de l'Impact Factor et du statut d'indexation Medline.
 
-> **score_pertinence(j)** = score_brut(j) / max(scores_bruts) × 100
+Le backend transmet alors un large panel de revues (Top 50) à l'interface. C'est à ce stade que vos filtres interactifs (*Medline only*, *IF minimum*, *Rangs acceptés*) sont appliqués en temps réel pour masquer les revues hors-périmètre. Les résultats survivants sont classés par défaut par **rang SIGAPS** (A+ → NC) puis **IF décroissant**.
+    """)
 
-Ce score reflète simultanément la **fréquence** (combien d'articles similaires dans ce journal)
-et la **similarité sémantique** (à quel point ces articles ressemblent au titre soumis).
+    st.header("7b. Optimiser l'IA (Le Prompt Engineering)")
+    st.markdown("""
+Notre algorithme de similarité Cosinus (le *SemanticRanker*) est un "sniper" sémantique. Il compare l'empreinte mathématique de votre titre avec celles des articles de PubMed.
 
-**Étape 4 — Classement final**
+**Comment adapter vos requêtes ?**
+Si l'algorithme lit des mots longs comme *"development"*, *"validation"*, *"retrospective"*, ou *"operationalise"*, il va leur accorder un poids important, pensant qu'il s'agit de termes médicaux clés. Résultat : il cherchera des articles ayant la même **méthodologie** plutôt que la même **pathologie**, ce qui faussera les suggestions de journaux (effet "Mega-Journals" comme *Scientific Reports* ou *PLoS One*).
 
-Les journaux sont classés par défaut par **rang SIGAPS** (A+ → NC) puis **IF décroissant**, ce
-qui permet de cibler en priorité les revues les mieux valorisées. Le tri est modifiable interactivement
-(Score de pertinence, IF, Rang seul — ascendant ou descendant).
+👉 **La règle d'or : Purifiez votre titre (Keyword Prompting)**
+Pour de meilleurs résultats, transformez votre titre en une suite de concepts clés.
+
+* **Mauvaise approche (Trop de bruit) :** *Development and validation of an occurrence-based healthy dietary diversity score easy to operationalise in dietary surveys.*
+* **Excellente approche (Concentrée) :** *Healthy dietary diversity score dietary surveys.*
+
+En retirant la "fluff" linguistique, vous forcez l'Intelligence Artificielle à se concentrer exclusivement sur votre biomarqueur, votre maladie ou votre cible clinique.
     """)
 
     st.header("8. Limites de cet outil")
@@ -1931,300 +2146,6 @@ with tab_journal:
             "⚠️ **sigaps_ref.csv non chargé** — les rangs affichés seront estimés par heuristique."
         )
 
-    # ── Helpers visuels ────────────────────────────────────────────────────────
-    RANK_COLORS = {
-        "A+": ("#ffffff", "#c8921a", "rgba(200,146,26,0.13)"),
-        "A": ("#0f1e35", "#2563eb", "rgba(37,99,235,0.10)"),
-        "B": ("#0f1e35", "#0f766e", "rgba(15,118,110,0.10)"),
-        "C": ("#2d4163", "#6b7fa3", "rgba(107,127,163,0.10)"),
-        "D": ("#0f1e35", "#b45309", "rgba(180,83,9,0.10)"),
-        "E": ("#0f1e35", "#be123c", "rgba(190,18,60,0.10)"),
-        "NC": ("#6b7fa3", "#a8b8d8", "rgba(168,184,216,0.12)"),
-    }
-
-    def _rank_badge(rank: str, source: str, impact_factor: str = "") -> str:
-        txt, border, bg = RANK_COLORS.get(
-            rank, ("#dde4f0", "#8a9bbf", "rgba(138,155,191,0.12)")
-        )
-        if impact_factor:
-            src_label = f"IF {impact_factor}"
-            src_color = "#b8860b"
-        elif source == "csv":
-            src_label = "Valeur réelle"
-            src_color = "#059669"
-        else:
-            src_label = "〜 estimé"
-            src_color = "#d97706"
-        return (
-            f'<span style="display:inline-block;padding:4px 12px;border-radius:20px;'
-            f"background:{bg};border:1px solid {border};color:{border};"
-            f"font-family:JetBrains Mono,monospace;font-weight:700;font-size:1.1rem;"
-            f'letter-spacing:0.04em;">{rank}</span>'
-            f'&nbsp;<span style="font-size:0.72rem;color:{src_color};'
-            f'font-family:DM Sans,sans-serif;font-weight:600;">{src_label}</span>'
-        )
-
-    def _score_card(rank: str, position: str, nb_authors: int, valeur: float) -> str:
-        p_pts = calculate_presence_score(position, rank)
-        f_pts = calculate_fractional_score(position, rank, nb_authors)
-        annual = p_pts * valeur
-        c1 = C1_COEFFICIENTS.get(position, 1)
-        c2 = C2_COEFFICIENTS.get(rank, 1)
-        return (
-            f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px;">'
-            f'<div style="background:#f8fafc;border:1px solid #e2e8f0;'
-            f'border-top:2px solid #b8860b;border-radius:10px;padding:14px 16px;">'
-            f'<div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;'
-            f'letter-spacing:0.12em;color:#6b7fa3;margin-bottom:4px;">C1 × C2</div>'
-            f'<div style="font-family:JetBrains Mono,monospace;font-size:1.15rem;'
-            f'color:#1e3a5f;">{c1} × {c2}</div></div>'
-            f'<div style="background:#f8fafc;border:1px solid #e2e8f0;'
-            f'border-top:2px solid #b8860b;border-radius:10px;padding:14px 16px;">'
-            f'<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;'
-            f'letter-spacing:0.1em;color:#48587a;margin-bottom:4px;">Pts Présence</div>'
-            f'<div style="font-family:JetBrains Mono,monospace;font-size:1.6rem;'
-            f'font-weight:600;color:#b8860b;">{p_pts:.0f}</div></div>'
-            f'<div style="background:#f8fafc;border:1px solid #e2e8f0;'
-            f'border-top:2px solid #2563eb;border-radius:10px;padding:14px 16px;">'
-            f'<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;'
-            f'letter-spacing:0.1em;color:#48587a;margin-bottom:4px;">Pts Fractionnaire</div>'
-            f'<div style="font-family:JetBrains Mono,monospace;font-size:1.6rem;'
-            f'font-weight:600;color:#2563eb;">{f_pts:.2f}</div></div>'
-            f'<div style="background:#f8fafc;border:1px solid #e2e8f0;'
-            f'border-top:2px solid #059669;border-radius:10px;padding:14px 16px;">'
-            f'<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;'
-            f'letter-spacing:0.1em;color:#48587a;margin-bottom:4px;">Valeur annuelle</div>'
-            f'<div style="font-family:JetBrains Mono,monospace;font-size:1.6rem;'
-            f'font-weight:600;color:#059669;">{annual:,.0f} €</div></div>'
-            f"</div>"
-        )
-
-    def _journal_card(
-        jr,
-        position: str,
-        nb_authors: int,
-        show_similarity: bool = False,
-        expanded_calc: bool = False,
-        separator: bool = False,
-    ) -> None:
-        nlm_display = jr.nlm_id or "—"
-        issn_display = getattr(jr, "issn", "") or "—"
-        country = getattr(jr, "country", "")
-        medline_tag = getattr(jr, "medline_indexed", "")
-
-        _left_border = (
-            "#b8860b"
-            if jr.rank in ("A+", "A")
-            else "#2563eb"
-            if jr.rank == "B"
-            else "#94a3b8"
-        )
-        _country_span = (
-            '<span style="font-size:0.72rem;color:#48587a;">' + country + "</span>"
-            if country
-            else ""
-        )
-        _medline_span = ""
-        if medline_tag:
-            m_color = "#2ec98a" if medline_tag.lower().startswith("o") else "#e05c6e"
-            _medline_span = (
-                f'<span style="font-size:0.7rem;font-weight:600;color:{m_color};">'
-                f"Medline&nbsp;{medline_tag}</span>"
-            )
-
-        _sim_bar = ""
-        if show_similarity:
-            pct = int(jr.similarity * 100)
-            bar_color = (
-                "#e8cc7a" if pct >= 70 else "#4a90e2" if pct >= 40 else "#8a9bbf"
-            )
-            art_count = getattr(jr, "article_count", 0)
-            _sim_bar = (
-                f'<div style="margin-top:10px;">'
-                f'<div style="display:flex;justify-content:space-between;'
-                f'font-size:0.68rem;color:#94a3b8;margin-bottom:3px;">'
-                f"<span>Score de pertinence</span>"
-                f'<span style="color:{bar_color};font-weight:700;">{pct}%'
-                f"{'&nbsp;·&nbsp;' + str(art_count) + ' article(s) similaire(s)' if art_count else ''}"
-                f"</span></div>"
-                f'<div style="background:#e2e8f0;border-radius:99px;height:5px;overflow:hidden;">'
-                f'<div style="width:{pct}%;height:100%;'
-                f'background:{bar_color};border-radius:99px;"></div>'
-                f"</div></div>"
-            )
-
-        st.markdown(
-            f'<div style="background:#ffffff;border:1px solid #dde6f5;'
-            f"border-left:4px solid {_left_border}"
-            f';border-radius:12px;padding:18px 22px;margin-bottom:8px;box-shadow:0 2px 8px rgba(30,58,95,0.07);">'
-            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">'
-            f'<div style="flex:1;">'
-            f'<div style="font-family:Playfair Display,serif;font-size:1.15rem;'
-            f'font-weight:600;color:#1e3a5f;margin-bottom:6px;">{jr.journal_name}</div>'
-            f'<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">'
-            f'<span style="font-family:JetBrains Mono,monospace;font-size:0.72rem;'
-            f'color:#94a3b8;">Abrév.&nbsp;<b style="color:#64748b;">{jr.medline_ta}</b></span>'
-            f'<span style="font-family:JetBrains Mono,monospace;font-size:0.72rem;'
-            f'color:#94a3b8;">NLM_ID&nbsp;<b style="color:#64748b;">{nlm_display}</b></span>'
-            f'<span style="font-family:JetBrains Mono,monospace;font-size:0.72rem;'
-            f'color:#94a3b8;">ISSN&nbsp;<b style="color:#64748b;">{issn_display}</b></span>'
-            f"{_medline_span}{_country_span}"
-            f"</div>"
-            f"{_sim_bar}"
-            f"</div>"
-            f'<div style="text-align:right;white-space:nowrap;">'
-            f"{_rank_badge(jr.rank, jr.rank_source, jr.impact_factor)}"
-            f"</div>"
-            f"</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-        with st.expander(
-            f"Score SIGAPS — position : {position} · {nb_authors} auteurs",
-            expanded=expanded_calc,
-        ):
-            c1 = C1_COEFFICIENTS.get(position, 1)
-            c2 = C2_COEFFICIENTS.get(jr.rank, 1)
-            st.markdown(
-                _score_card(jr.rank, position, nb_authors, valeur_point),
-                unsafe_allow_html=True,
-            )
-            st.write("")
-            st.caption(
-                f"Position **{position}** · Rang **{jr.rank}** · "
-                f"C1={c1} · C2={c2} · {nb_authors} auteurs · Valeur point : {valeur_point} €"
-            )
-
-        # ── Graphique historique rang + IF (si données disponibles) ──
-        _hist = _ref_db.get_history(jr.nlm_id) if _ref_db and jr.nlm_id else {}
-        if _hist:
-            with st.expander(
-                f"Évolution rang & IF — {jr.journal_name}", expanded=False
-            ):
-                _years = sorted(_hist.keys())
-                _ranks = [_hist[y].get("rank", None) for y in _years]
-                _ifs = []
-                for y in _years:
-                    try:
-                        _ifs.append(float(_hist[y]["if"].replace(",", ".")))
-                    except:
-                        _ifs.append(None)
-                _RANK_NUM = {"A+": 7, "A": 6, "B": 5, "C": 4, "D": 3, "E": 2, "NC": 1}
-                _rank_nums = [_RANK_NUM.get(r, None) for r in _ranks]
-                _has_rank = any(v is not None for v in _rank_nums)
-                _has_if = any(v is not None for v in _ifs)
-                if _has_rank or _has_if:
-                    _nrows = 2 if (_has_rank and _has_if) else 1
-                    _specs = [[{"secondary_y": False}]] * _nrows
-                    _titles = []
-                    if _has_rank:
-                        _titles.append("Rang SIGAPS")
-                    if _has_if:
-                        _titles.append("Impact Factor")
-                    _fig = make_subplots(
-                        rows=_nrows,
-                        cols=1,
-                        subplot_titles=_titles,
-                        vertical_spacing=0.18,
-                    )
-                    _row = 1
-                    _RANK_LABEL = {
-                        7: "A+",
-                        6: "A",
-                        5: "B",
-                        4: "C",
-                        3: "D",
-                        2: "E",
-                        1: "NC",
-                    }
-                    _RANK_COLOR = {
-                        "A+": "#c8921a",
-                        "A": "#2563eb",
-                        "B": "#0f766e",
-                        "C": "#6b7fa3",
-                        "D": "#b45309",
-                        "E": "#be123c",
-                        "NC": "#a8b8d8",
-                    }
-                    if _has_rank:
-                        _colors = [_RANK_COLOR.get(r, "#6b7fa3") for r in _ranks]
-                        _fig.add_trace(
-                            go.Scatter(
-                                x=_years,
-                                y=_rank_nums,
-                                mode="lines+markers+text",
-                                text=_ranks,
-                                textposition="top center",
-                                textfont=dict(
-                                    size=11, color="#1e3a5f", family="JetBrains Mono"
-                                ),
-                                line=dict(color="#2563eb", width=2.5),
-                                marker=dict(
-                                    size=10,
-                                    color=_colors,
-                                    line=dict(color="#1e3a5f", width=1.5),
-                                ),
-                                name="Rang",
-                                hovertemplate="%{text}<extra></extra>",
-                            ),
-                            row=_row,
-                            col=1,
-                        )
-                        _fig.update_yaxes(
-                            tickvals=list(_RANK_NUM.values()),
-                            ticktext=list(_RANK_NUM.keys()),
-                            range=[0, 8],
-                            row=_row,
-                            col=1,
-                        )
-                        _row += 1
-                    if _has_if:
-                        _if_vals = [v for v in _ifs if v is not None]
-                        _fig.add_trace(
-                            go.Scatter(
-                                x=_years,
-                                y=_ifs,
-                                mode="lines+markers",
-                                line=dict(color="#c8921a", width=2.5),
-                                marker=dict(
-                                    size=8,
-                                    color="#c8921a",
-                                    line=dict(color="#1e3a5f", width=1.5),
-                                ),
-                                name="IF",
-                                fill="tozeroy",
-                                fillcolor="rgba(200,146,26,0.08)",
-                                hovertemplate="IF %{y:.2f}<extra></extra>",
-                            ),
-                            row=_row,
-                            col=1,
-                        )
-                    _fig.update_layout(
-                        height=260 * _nrows,
-                        margin=dict(t=40, b=20, l=30, r=10),
-                        paper_bgcolor="#f8fafc",
-                        plot_bgcolor="#f8fafc",
-                        font=dict(family="Sora, sans-serif", color="#1e3a5f", size=12),
-                        showlegend=False,
-                        xaxis=dict(dtick=1, gridcolor="#dde6f5"),
-                        xaxis2=dict(dtick=1, gridcolor="#dde6f5") if _nrows > 1 else {},
-                    )
-                    _fig.update_xaxes(gridcolor="#dde6f5")
-                    _fig.update_yaxes(gridcolor="#dde6f5")
-                    st.plotly_chart(
-                        _fig, use_container_width=True, config={"displayModeBar": False}
-                    )
-                else:
-                    st.caption(
-                        "Données historiques insuffisantes dans le référentiel CSV."
-                    )
-
-        if separator:
-            st.markdown(
-                '<div style="height:1px;background:#dde6f5;margin:6px 0 12px;"></div>',
-                unsafe_allow_html=True,
-            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # PARAMÈTRES COMMUNS — saisis une seule fois, partagés par les 2 sous-onglets
@@ -2255,10 +2176,10 @@ with tab_journal:
     # SOUS-ONGLETS
     # ══════════════════════════════════════════════════════════════════════════
 
-    sub_tab_know, sub_tab_suggest = st.tabs(
+    sub_tab_suggest,sub_tab_know = st.tabs(
         [
-            "🔤 J'ai une idée de journal",
             "🧠 Aide au choix d'un journal",
+            "🔤 J'ai une idée de journal",
         ]
     )
 
@@ -2372,7 +2293,7 @@ with tab_journal:
                 else:
                     nb_j = len(journal_results)
                     st.subheader(
-                        f"{nb_j} journal{'x' if False else 'aux' if nb_j > 1 else ''} "
+                        f"{nb_j} journal{'aux' if nb_j > 1 else ''} "
                         f"trouvé{'s' if nb_j > 1 else ''}"
                     )
                     for i, jr in enumerate(journal_results):
@@ -2391,40 +2312,90 @@ with tab_journal:
     # ──────────────────────────────────────────────────────────────────────────
 
     with sub_tab_suggest:
-        article_title_input = st.text_area(
-            "Titre de votre article",
-            placeholder=(
-                "Ex: Effect of Deferasirox Six Months after allo-HSCT on AML/MDS Outcomes: "
-                "a Propensity-Score Matched Study"
-            ),
-            height=90,
-            key="nlp_title",
+
+        st.markdown(
+            "<div class='info-banner' style='margin-bottom: 15px;'>"
+            "💡 <b>Astuce Prompting :</b> Si les résultats ne sont pas suffisamment pertinents "
+            " <b>retirez les termes peu spécifiques</b> de votre titre.<br>"
+            "❌ <i>Validation of a novel prognostic score for survival in metastatic breast cancer: a retrospective study</i><br>"
+            "✅ <i>Prognostic score survival metastatic breast cancer</i>"
+            "</div>",
+            unsafe_allow_html=True
         )
 
-        # ── Bouton de recherche ───────────────────────────────────────────────
-        suggest_btn = st.button(
-            "🧠 Trouver des journaux cibles",
-            key="btn_suggest",
-            disabled=not article_title_input.strip(),
-            help=(
-                "Interroge PubMed (jusqu'à 100 articles) + analyse sémantique NLP. "
-                f"Moteur : {_embed_backend.upper() if _embed_model else 'Jaccard'}."
-            ),
-        )
+        with st.form(key="suggest_form", enter_to_submit=False):
+            article_title_input = st.text_area(
+                "Titre de votre article (purifié)",
+                placeholder=(
+                    "Ex: Propensity-Score Matched Deferasirox allogeneic hematopoietic stem cell transplantation AML MDS"
+                ),
+                height=90,
+            )
+            suggest_btn = st.form_submit_button(
+                "🧠 Trouver des journaux cibles",
+                help=(
+                    "Interroge PubMed (jusqu'à 100 articles) + analyse sémantique NLP. "
+                    f"Moteur : {_embed_backend.upper() if _embed_model else 'Jaccard'}."
+                ),
+            )
 
-        # ── Lancement de la recherche (stockée en session_state) ──────────────
         if suggest_btn and article_title_input.strip():
             _cache_key = article_title_input.strip()
             if _cache_key != st.session_state.suggest_query_cache:
-                with st.spinner(
-                    "Interrogation PubMed (jusqu'à 100 articles) + analyse sémantique…"
-                ):
-                    st.session_state.raw_suggestions = suggest_journals_by_title(
-                        _cache_key,
-                        ref_db=_ref_db,
-                        max_articles=100,
-                        max_journals=30,
+
+                st.session_state.domain_report = detect_article_domain(
+                    _cache_key,
+                    _domain_engine if _domain_engine_ready else None,
+                )
+
+                _domain_placeholder = st.empty()
+                _dr_loading = st.session_state.domain_report
+                if _dr_loading:
+                    _fam_colors_l: dict[str, tuple[str, str]] = {
+                        "oncologie":   ("#7c3aed", "rgba(124,58,237,0.10)"),
+                        "hematologie": ("#be123c", "rgba(190,18,60,0.09)"),
+                        "general":     ("#2563eb", "rgba(37,99,235,0.08)"),
+                    }
+                    _fam_key_l = (_dr_loading.get("family") or "general").lower()
+                    _dc_l, _db_l = _fam_colors_l.get(
+                        _fam_key_l, ("#6b7fa3", "rgba(107,127,163,0.08)")
                     )
+                    _conf_l = int(_dr_loading["confidence"] * 100)
+                    _spe_l = (
+                        '<span style="font-size:0.64rem;background:rgba(124,58,237,0.15);'
+                        'color:#7c3aed;border-radius:4px;padding:1px 6px;margin-left:6px;'
+                        'font-weight:700;">Spécialiste onco</span>'
+                        if _dr_loading.get("routed_to_specialist")
+                        else ""
+                    )
+                    _domain_placeholder.markdown(
+                        f'<div style="background:{_db_l};border:1px solid {_dc_l}33;'
+                        f'border-left:3px solid {_dc_l};border-radius:6px;'
+                        f'padding:9px 14px;margin-bottom:10px;font-size:0.78rem;">'
+                        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">'
+                        f'<span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;'
+                        f'letter-spacing:0.09em;color:{_dc_l};">🎯 Thématique détectée</span>'
+                        f'<b style="color:{_dc_l};font-size:0.85rem;">'
+                        f'{_dr_loading["domain_id"].replace("_", " ").title()}</b>'
+                        f'{_spe_l}'
+                        f'<span style="margin-left:auto;font-family:JetBrains Mono,monospace;'
+                        f'font-size:0.72rem;color:{_dc_l};font-weight:700;">'
+                        f'{_conf_l}%&nbsp;confiance</span>'
+                        f'</div>'
+                        f'<div style="background:rgba(255,255,255,0.4);border-radius:99px;'
+                        f'height:4px;overflow:hidden;">'
+                        f'<div style="width:{max(_conf_l, 4)}%;height:100%;'
+                        f'background:{_dc_l};border-radius:99px;"></div></div>'
+                        f'<div style="margin-top:5px;font-size:0.68rem;color:#6b7fa3;">'
+                        f'Recherche de journaux en cours…'
+                        f'</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                with st.spinner("Recherche fédérée (PubMed + Scopus) en cours..."):
+                    st.session_state.raw_suggestions = new_recommendation_service.get_suggestions(_cache_key)                
+                
+                _domain_placeholder.empty()
                 st.session_state.suggest_query_cache = _cache_key
 
         # ── Résultats (re-évalués à chaque changement de filtre/tri) ──────────
@@ -2436,28 +2407,51 @@ with tab_journal:
                 "Essayez avec quelques mots-clés principaux uniquement."
             )
 
-        if raw_suggestions:
-            # ── Bannière niveau de relaxation ─────────────────────────────────
-            ql = raw_suggestions[0].query_level
-            qu = raw_suggestions[0].query_used
-            _ql_icon, _ql_color, _ql_msg = CASCADE_LEVEL_LABELS.get(
-                ql, ("⚠️", "#e05c6e", f"Niveau de relaxation {ql}")
-            )
-            st.markdown(
-                f'<div style="background:#f4f7fb;border:1px solid #dde6f5;'
-                f"border-left:3px solid {_ql_color};border-radius:6px;"
-                f'padding:7px 14px;margin-bottom:10px;font-size:0.79rem;display:flex;align-items:center;gap:8px;">'
-                f"<span>{_ql_icon}</span>"
-                f'<b style="color:{_ql_color};">{_ql_msg}</b>'
-                f'<span style="color:#a8b8d8;font-family:JetBrains Mono,monospace;'
-                f'font-size:0.70rem;margin-left:4px;">{qu}</span>'
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+        elif raw_suggestions:
+            _dr = st.session_state.get("domain_report", None)
+            if _dr:
+                _fam_colors: dict[str, tuple[str, str]] = {
+                    "oncologie":    ("#7c3aed", "rgba(124,58,237,0.10)"),
+                    "hematologie":  ("#be123c", "rgba(190,18,60,0.09)"),
+                    "general":      ("#2563eb", "rgba(37,99,235,0.08)"),
+                }
+                _fam_key = _dr["family"].lower() if _dr.get("family") else "general"
+                _d_color, _d_bg = _fam_colors.get(_fam_key, ("#6b7fa3", "rgba(107,127,163,0.08)"))
+                _specialist_tag = (
+                    '<span style="font-size:0.64rem;background:rgba(124,58,237,0.15);'
+                    'color:#7c3aed;border-radius:4px;padding:1px 6px;margin-left:6px;'
+                    'font-weight:700;">Spécialiste onco</span>'
+                    if _dr.get("routed_to_specialist")
+                    else ""
+                )
+                _conf_pct = int(_dr["confidence"] * 100)
+                _bar_w = max(_conf_pct, 4)
+                
+                st.markdown(
+                    f'<div style="background:{_d_bg};border:1px solid {_d_color}33;'
+                    f'border-left:3px solid {_d_color};border-radius:6px;'
+                    f'padding:9px 14px;margin-bottom:10px;font-size:0.78rem;">'
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">'
+                    f'<span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;'
+                    f'letter-spacing:0.09em;color:{_d_color};">🎯 Domaine détecté</span>'
+                    f'<b style="color:{_d_color};font-size:0.84rem;">'
+                    f'{_dr["domain_id"].replace("_", " ").title()}</b>'
+                    f'{_specialist_tag}'
+                    f'<span style="margin-left:auto;font-family:JetBrains Mono,monospace;'
+                    f'font-size:0.72rem;color:{_d_color};font-weight:700;">{_conf_pct}%</span>'
+                    f'</div>'
+                    f'<div style="background:rgba(255,255,255,0.4);border-radius:99px;'
+                    f'height:4px;overflow:hidden;">'
+                    f'<div style="width:{_bar_w}%;height:100%;background:{_d_color};'
+                    f'border-radius:99px;"></div></div>'
+                    f'<div style="margin-top:5px;font-size:0.68rem;color:#6b7fa3;">'
+                    f'Score brut : {_dr["raw_score"]:.3f} · '
+                    f'Marge top1−top2 : {_dr["margin"]:.3f} · '
+                    f'Score méta-oncologie : {_dr["oncology_meta_score"]:.3f}'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
 
-            # ── BARRE FILTRES/TRI COMPACTE (inline, réactive) ─────────────────
-            # Les widgets Streamlit mis en columns ultra-compacts.
-            # Pas besoin de relancer : session_state.raw_suggestions persiste.
             st.markdown(
                 '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
                 '<span style="font-size:0.65rem;font-weight:700;color:#6b7fa3;'
@@ -2465,6 +2459,7 @@ with tab_journal:
                 '<div style="flex:1;height:1px;background:#dde6f5;"></div></div>',
                 unsafe_allow_html=True,
             )
+            
             _f1, _f2, _f3, _fsep, _f4, _f5 = st.columns([2.8, 1.1, 1.0, 0.1, 2.0, 0.7])
             with _f1:
                 filter_ranks = st.multiselect(
@@ -2505,7 +2500,6 @@ with tab_journal:
             with _f5:
                 _sort_asc = st.checkbox("↑ Asc", value=False, key="suggest_sort_asc")
 
-            # ── Application des filtres ───────────────────────────────────────
             def _if_float(s) -> float:
                 try:
                     return float(s.impact_factor.replace(",", "."))
@@ -2513,13 +2507,17 @@ with tab_journal:
                     return 0.0
 
             filtered = list(raw_suggestions)
+            
             if filter_ranks:
-                filtered = [s for s in filtered if s.rank in filter_ranks]
+                filtered = [s for s in filtered if s.rank_sigaps in filter_ranks]
             if filter_if_min > 0:
                 filtered = [s for s in filtered if _if_float(s) >= filter_if_min]
+                
+            # 🚀 LE FILTRE MEDLINE PARFAITEMENT SÉCURISE
             if filter_medline_only:
                 filtered = [
-                    s for s in filtered if s.medline_indexed.lower().startswith("o")
+                    s for s in filtered 
+                    if getattr(s, "medline_indexed", "").lower().startswith("o")
                 ]
 
             if not filtered:
@@ -2528,53 +2526,53 @@ with tab_journal:
                     "Élargissez les critères (rangs, IF minimum, Medline)."
                 )
             else:
-                # ── Tri ───────────────────────────────────────────────────────
                 _RANK_ORD = {"A+": 0, "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "NC": 6}
                 if _sort_by == "Rang SIGAPS puis IF":
                     filtered.sort(
                         key=lambda s: (
-                            _RANK_ORD.get(s.rank, 7) * (1 if not _sort_asc else -1),
+                            _RANK_ORD.get(s.rank_sigaps, 7) * (1 if not _sort_asc else -1),
                             -_if_float(s) * (1 if not _sort_asc else -1),
                         )
                     )
                 elif _sort_by == "Score de pertinence":
-                    filtered.sort(key=lambda s: s.similarity, reverse=not _sort_asc)
+                    filtered.sort(key=lambda s: s.similarity_score, reverse=not _sort_asc)
                 elif _sort_by == "IF":
                     filtered.sort(key=lambda s: _if_float(s), reverse=not _sort_asc)
-                else:  # Rang seul
+                else:
                     filtered.sort(
-                        key=lambda s: _RANK_ORD.get(s.rank, 7), reverse=_sort_asc
+                        key=lambda s: _RANK_ORD.get(s.rank_sigaps, 7), reverse=_sort_asc
                     )
 
-                # ── En-tête résultats + export Excel ─────────────────────────
-                total_arts = sum(s.article_count for s in raw_suggestions)
+                total_arts = sum(s.matched_articles_count for s in raw_suggestions)
                 nb_s = len(filtered)
                 _hcol1, _hcol2 = st.columns([4, 1])
+                
                 with _hcol1:
                     st.markdown(
                         f'<div style="font-family:var(--font-display);font-size:1.05rem;'
                         f'font-weight:600;color:var(--navy);margin:6px 0 4px;">'
-                        f"{nb_s} journal{'aux' if nb_s > 1 else ''} suggéré{'s' if nb_s > 1 else ''}"
+                        f"{nb_s} journa{'ux' if nb_s > 1 else 'l'} suggéré{'s' if nb_s > 1 else ''}"
                         f"</div>"
                         f'<div style="font-size:0.72rem;color:var(--text-muted);font-family:var(--font-body);margin-bottom:12px;">'
-                        f"{total_arts} articles PubMed analysés · "
+                        f"{total_arts} articles pertinents analysés · "
                         f"Medline : {'actif' if filter_medline_only else 'inactif'} · "
                         f"Tri : {_sort_by} {'↑' if _sort_asc else '↓'}"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
+                    
                 with _hcol2:
                     _export_rows = [
                         {
-                            "Rang": s.rank,
+                            "Rang": s.rank_sigaps,
                             "Journal": s.journal_name,
                             "Abréviation": s.medline_ta,
                             "NLM_ID": s.nlm_id,
                             "ISSN": getattr(s, "issn", ""),
                             "IF": getattr(s, "impact_factor", ""),
                             "Medline": getattr(s, "medline_indexed", ""),
-                            "Score pertinence (%)": int(s.similarity * 100),
-                            "Articles similaires": s.article_count,
+                            "Score pertinence (%)": int(s.similarity_score * 100),
+                            "Articles similaires": s.matched_articles_count,
                         }
                         for s in filtered[:30]
                     ]
@@ -2588,29 +2586,25 @@ with tab_journal:
                         data=_buf_sug.getvalue(),
                         file_name=f"SIGAPS_suggestions_{datetime.now().strftime('%Y%m')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
-                # ── Affichage des résultats — chaque journal dans un bloc unifié ──
                 for i, sug in enumerate(filtered[:30]):
-                    # ══ SÉPARATEUR MARQUÉ entre chaque résultat ══
                     if i > 0:
                         st.markdown(
                             '<div style="margin:28px 0 20px;display:flex;align-items:center;gap:12px;">'
                             '<div style="flex:1;height:2px;'
-                            "background:linear-gradient(90deg,#c8d8ee 0%,#dde6f5 100%);"
+                            'background:linear-gradient(90deg,#c8d8ee 0%,#dde6f5 100%);'
                             'border-radius:99px;"></div>'
                             f'<span style="font-size:0.62rem;font-weight:700;color:#a8b8d8;'
                             f'text-transform:uppercase;letter-spacing:0.12em;white-space:nowrap;">'
                             f"— Résultat {i + 1} —</span>"
                             '<div style="flex:1;height:2px;'
-                            "background:linear-gradient(90deg,#dde6f5 0%,#c8d8ee 100%);"
+                            'background:linear-gradient(90deg,#dde6f5 0%,#c8d8ee 100%);'
                             'border-radius:99px;"></div></div>',
                             unsafe_allow_html=True,
                         )
 
-                    # ══ BLOC RÉSULTAT — carte + expanders groupés visuellement ══
-                    # Enveloppe avec bordure gauche colorée selon le rang
                     _rank_left = {
                         "A+": "#c8921a",
                         "A": "#c8921a",
@@ -2619,11 +2613,11 @@ with tab_journal:
                         "D": "#b45309",
                         "E": "#be123c",
                         "NC": "#a8b8d8",
-                    }.get(sug.rank, "#dde6f5")
+                    }.get(sug.rank_sigaps, "#dde6f5")
 
                     st.markdown(
                         f'<div style="border-left:4px solid {_rank_left};'
-                        f"border-radius:0 12px 12px 0;"
+                        f'border-radius:0 12px 12px 0;'
                         f'padding-left:12px;margin-bottom:0;">',
                         unsafe_allow_html=True,
                     )
@@ -2637,10 +2631,9 @@ with tab_journal:
                         separator=False,
                     )
 
-                    # ── Articles similaires — immédiatement sous la carte ────
                     if sug.example_titles:
                         with st.expander(
-                            f"Articles similaires dans ce journal ({sug.article_count})",
+                            f"Articles similaires dans ce journal ({sug.matched_articles_count})",
                             expanded=False,
                         ):
                             for art in sug.example_titles:
@@ -2659,28 +2652,26 @@ with tab_journal:
                                     _link_html = (
                                         f'<a href="{_url}" target="_blank" rel="noopener" '
                                         f'style="flex-shrink:0;display:inline-flex;align-items:center;'
-                                        f"gap:3px;font-size:0.68rem;color:#2563eb;"
-                                        f"font-family:JetBrains Mono,monospace;font-weight:600;"
-                                        f"text-decoration:none;border:1px solid rgba(37,99,235,0.22);"
-                                        f"border-radius:4px;padding:2px 7px;"
+                                        f'gap:3px;font-size:0.68rem;color:#2563eb;'
+                                        f'font-family:JetBrains Mono,monospace;font-weight:600;'
+                                        f'text-decoration:none;border:1px solid rgba(37,99,235,0.22);'
+                                        f'border-radius:4px;padding:2px 7px;'
                                         f'background:rgba(37,99,235,0.06);">'
-                                        f"↗ PMID {_pmid}</a>"
+                                        f'↗ PMID {_pmid}</a>'
                                     )
                                 else:
                                     _link_html = ""
                                 st.markdown(
                                     f'<div style="display:flex;align-items:flex-start;'
-                                    f"justify-content:space-between;gap:14px;"
+                                    f'justify-content:space-between;gap:14px;'
                                     f'padding:10px 6px;border-bottom:1px solid #eef3fb;">'
                                     f'<span style="font-size:0.83rem;color:#2d4163;'
                                     f'font-family:Sora,sans-serif;line-height:1.55;flex:1;">{_t}</span>'
-                                    f"{_link_html}"
-                                    f"</div>",
+                                    f'{_link_html}'
+                                    f'</div>',
                                     unsafe_allow_html=True,
                                 )
 
-                    # Fermeture visuelle du bloc (le div border-left n'est pas fermable
-                    # en Streamlit, donc on ajoute juste un espace de respiration)
                     st.markdown(
                         '<div style="margin-bottom:4px;"></div>', unsafe_allow_html=True
                     )
