@@ -5,11 +5,20 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "python-dotenv>=1.0.0",
     "matplotlib>=3.10.8",
+    "onnxruntime>=1.24.2",
     "openpyxl>=3.1.5",
+    "optimum[onnxruntime]==1.23.3",
     "pandas>=2.3.3",
     "plotly>=6.5.2",
+    "pytest>=9.0.2",
     "requests>=2.32.5",
     "sentence-transformers>=5.2.3",
     "streamlit>=1.54.0",
+    "transformers==4.44.2",
+]
+[tool.pytest.ini_options]
+markers = [
+    "network: tests nécessitant un accès réseau réel (PubMed, Scopus)",
 ]
