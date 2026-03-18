@@ -771,7 +771,7 @@ class SimilarityScorer:
 class DomainClassifier:
     """
     Classifieur généraliste basé sur des centroïdes sémantiques.
-    Refactorisation de la logique de DomainInference v1.0, avec
+    Refactorisation de la logique de DomainInference, avec
     ajout du seuillage de rejet et des scores calibrés.
     """
 
