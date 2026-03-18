@@ -1,21 +1,11 @@
 """
-backend.py — OpenSIGAPS v8.1
-Moteur PubMed. Algorithme SIGAPS conforme MERRI 2022.
+Moteur principal d'OpenSIGAPS.
 
-OPTIMISATIONS v8.1 (cascade suggestion journals) :
-  • [OPT-1] _term_specificity_score() — tri par spécificité médicale réelle
-    au lieu de la longueur brute. Paliers : acronyme > terme rare > terme générique.
-    Impact : _extract_pubmed_query() retourne tokens non triés ;
-             _build_cascade_queries() trie par _term_specificity_score().
-  • [OPT-2] _mesh_term_to_plain() + niveaux 4/5/6 de la cascade dérivés des
-    termes MeSH canoniques (quand disponibles) plutôt que des tokens bruts.
-    Impact : _build_cascade_queries().
-  • [OPT-3] _CASCADE_STOP_THRESHOLDS — seuil d'arrêt adaptatif par niveau.
-    Impact : suggest_journals_by_title().
+Ce module gère la logique métier de la plateforme :
+- Calcul des scores SIGAPS (Présence et Fractionnaire) selon les règles MERRI 2022.
+- Gestion du référentiel des journaux (SigapsRefDB).
+- Orchestration de la recherche fédérée (PubMed, Scopus) et déduplication.
 
-Référence : DRCI AP-HP — MERRI 2022
-https://recherche-innovation.aphp.fr/wp-content/blogs.dir/77/files/2022/04/
-SIGAPS-Nouveautes-diffusion-V2.pdf
 """
 
 import csv
@@ -1784,7 +1774,7 @@ _MEDICAL_STOPWORDS: frozenset[str] = frozenset(
     }
 )
 
-# ── [OPT-1] Termes à faible priorité de tri (non exclus, mais relégués) ───────
+# Termes à faible priorité de tri (non exclus, mais relégués) ───────
 # Ces tokens passent le filtre d'exclusion mais ont un IDF bas dans PubMed.
 # Ils ne sont PAS retirés de la requête — ils sont triés après les termes
 # spécifiques grâce à _term_specificity_score().
@@ -1821,13 +1811,13 @@ _GENERIC_RESEARCH_TERMS: frozenset[str] = frozenset(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [OPT-1] _term_specificity_score
+# _term_specificity_score
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
 def _term_specificity_score(token: str) -> float:
     """
-    [OPT-1] Score de spécificité d'un token pour le tri des termes de requête.
+    Score de spécificité d'un token pour le tri des termes de requête.
 
     Remplace le tri naïf par longueur par un classement en 3 paliers :
 
@@ -1845,7 +1835,7 @@ def _term_specificity_score(token: str) -> float:
                    Ex : "conditions", "accuracy", "settings", "disease".
 
     Bris d'égalité intra-palier : len(token) / 1000
-    Division par 1000 (et non 10 ou 100) pour que la longueur ne permette
+    Division par 1000 pour que la longueur ne permette
     jamais à un terme générique long de dépasser un acronyme court.
 
     Clé de tri décroissant : higher → more specific → priorité haute.
@@ -2240,7 +2230,7 @@ def _build_cascade_queries(title: str) -> list[tuple[str, str]]:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# suggest_journals_by_title  (modifié OPT-3)
+# suggest_journals_by_title 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
@@ -2252,9 +2242,9 @@ def suggest_journals_by_title(
     domain_engine=None,  # Optional[HierarchicalDomainInference] — None → comportement v8.1
 ) -> list[SuggestedJournal]:
     """
-    [v8.2] Surpondération thématique via domain_inference.py + enrichissement Scopus.
+    Surpondération thématique via domain_inference.py + enrichissement Scopus.
 
-    Nouveautés vs v8.1 (domain_engine != None) :
+    domain_engine != None :
       ① Niveau 0 de cascade : requête PubMed ancrée sur les descripteurs canoniques
          du domaine détecté — arrive AVANT les 6 niveaux existants.
       ② DOMAIN_BOOST_FACTOR : weighted_score(journal_j) += sim × (1 + boost_j × 0.40)
@@ -2264,12 +2254,12 @@ def suggest_journals_by_title(
       ③ Scopus thématique : ScopusFetcher.search_by_topic() enrichit le pool d'articles
          avec des publications alignées sur les termes du domaine détecté.
 
-    domain_engine=None → comportement v8.1 identique (aucune régression).
+    domain_engine=None → aucune régression
     """
     db = ref_db or _REF_DB
     BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
-    # ── [v8.2] Détection du domaine sémantique ────────────────────────────────
+    # ── Détection du domaine sémantique ───────────────────────────────────
     # Calculs effectués une seule fois ici — detect_article_domain() appelle
     # domain_engine.predict() séparément dans app.py (cache session_state).
     _domain_centroid: Optional[np.ndarray] = None
@@ -2306,10 +2296,10 @@ def suggest_journals_by_title(
     if _domain_level0_terms:
         _lvl0_term = " AND ".join(_domain_level0_terms)
         cascade_queries = [(_lvl0_term, "[Title/Abstract]")] + _base_cascade
-        _level_offset = 0   # niveau 0 exist → enumerate démarre à 0
+        _level_offset = 0   # enumerate démarre à 0
     else:
         cascade_queries = _base_cascade
-        _level_offset = 1   # comportement v8.1 → enumerate démarre à 1
+        _level_offset = 1   # enumerate démarre à 1
 
     uids: list[str] = []
     query_used: str = ""
@@ -2350,7 +2340,7 @@ def suggest_journals_by_title(
                 field_tag,
             )
 
-            # [OPT-3] Seuil adaptatif : niveau 0 = même exigence que niveau 1
+            # Seuil adaptatif : niveau 0 = même exigence que niveau 1
             _effective_level = max(level, 1)
             stop_threshold: int = _CASCADE_STOP_THRESHOLDS.get(
                 _effective_level, CASCADE_MIN_RESULTS
@@ -2422,7 +2412,7 @@ def suggest_journals_by_title(
         query_tri = _trigrams(article_title)
         sims = [_jaccard(query_tri, _trigrams(m["art_title"])) for m in article_meta]
 
-    # ── [v8.2] Pré-calcul index NLM→idx pour le boost domaine (O(1) par article) ──
+    # ── Pré-calcul index NLM→idx pour le boost domaine (O(1) par article) ──
     _nlm_to_idx: dict[str, int] = {}
     if _domain_centroid is not None and db.embeddings_ready and db._emb_nlm_ids:
         _nlm_to_idx = {nlm: i for i, nlm in enumerate(db._emb_nlm_ids)}
@@ -2441,7 +2431,7 @@ def suggest_journals_by_title(
                 "example_titles": [],
             }
 
-        # [v8.2] Boost domaine : cos(centroïde_domaine, vecteur_journal) × DOMAIN_BOOST_FACTOR
+        # Boost domaine : cos(centroïde_domaine, vecteur_journal) × DOMAIN_BOOST_FACTOR
         _boost: float = 0.0
         if _domain_centroid is not None and nlm_id in _nlm_to_idx:
             _j_vec: np.ndarray = db._emb_matrix[_nlm_to_idx[nlm_id]]
@@ -2454,7 +2444,7 @@ def suggest_journals_by_title(
                 {"title": meta["art_title"], "pmid": meta["art_pmid"]}
             )
 
-    # ── [v8.2] Enrichissement Scopus thématique ───────────────────────────────
+    # ── Enrichissement Scopus thématique ───────────────────────────────
     # Activé uniquement si le domaine a été détecté (termes niveau 0 disponibles).
     # Ne touche pas à la recherche auteur/équipe (FederatedSearch.search()).
     if _domain_level0_terms:

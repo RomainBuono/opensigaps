@@ -25,3 +25,6 @@ Dockerfile
 docker-compose.yml
 test*.+.py
 .dockerignore
+
+models/*
+!models/.gitkeep
