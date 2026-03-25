@@ -706,7 +706,12 @@ def _load_ref_db(csv_path: str) -> SigapsRefDB:
 
 
 # Chemin par défaut : même dossier que app.py
-_CSV_PATH = str(Path(__file__).parent / "data" / "processed" / "sigaps_ref.csv")
+_CSV_PATH_REAL = str(Path(__file__).parent / "data" / "processed" / "sigaps_ref.csv")
+# Renommer le fichier sigaps_ref_BACKUP.csv en sigaps_ref.csv, et supprimer sigaps_demo.csv
+# pour relancer la construction des embeddings
+_CSV_PATH_DEMO = str(Path(__file__).parent / "data" / "processed" / "sigaps_demo.csv")
+
+_CSV_PATH = _CSV_PATH_REAL if Path(_CSV_PATH_REAL).exists() else _CSV_PATH_DEMO
 
 # ── Chargement du modèle
 _embed_model, _embed_backend = _load_embed_model()
