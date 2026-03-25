@@ -29,6 +29,5 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 4. On bascule sur l'utilisateur sécurisé
 USER appuser
 
-EXPOSE 8501
-
-CMD ["streamlit", "run", "app.py"]
+EXPOSE 7860
+CMD ["streamlit", "run", "app.py", "--server.port=7860", "--server.address=0.0.0.0"]
