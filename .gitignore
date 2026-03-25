@@ -6,25 +6,36 @@ build/
 dist/
 wheels/
 *.egg-info
-data/
 
 # Virtual environments
 .venv
 .env
+venv/
 # Fichiers système
 .DS_Store
-sigaps.txt
-sigaps_ref.csv
-sigaps_ref.emb.ids
-sigaps_ref.emb.npymultilingual-e5-small-onnx/
-sigaps_ref.csv
-*.emb.npy
-*.emb.ids
-*.csv
-Dockerfile
 docker-compose.yml
 test*.+.py
 .dockerignore
+sigaps.txt
+*:Zone.Identifier
 
+# =========================================
+# GESTION DU DOSSIER DATA 
+# =========================================
+# 1. On ignore tout le contenu du dossier data par défaut
+data/*
+# 2. MAIS on autorise Git à "entrer" dans le sous-dossier processed
+!data/processed/
+# 3. On ignore le contenu de processed (dont les vrais sigaps_ref)
+data/processed/*
+# 4. MAIS on autorise explicitement et uniquement la démo !
+!data/processed/sigaps_demo.csv
+!data/processed/sigaps_demo.emb.npy
+!data/processed/sigaps_demo.emb.ids
+
+
+# =========================================
+# MODÈLES IA (Mode Air-Gapped)
+# =========================================
 models/*
 !models/.gitkeep
