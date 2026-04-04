@@ -1,13 +1,14 @@
 ---
 title: OpenSIGAPS
-emoji: 🏥
+emoji: 🧬
 colorFrom: blue
-colorTo: red
-sdk: docker
+colorTo: yellow
+sdk: streamlit
+app_file: app.py
 pinned: false
 ---
 
-# 🏥 OpenSIGAPS 
+# OpenSIGAPS
 
 > Estimation automatisée de la valorisation SIGAPS · Algorithme MERRI 2022 · Aide au choix de journal propulsée par IA
 
