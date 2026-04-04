@@ -318,8 +318,6 @@ six==1.17.0
     # via python-dateutil
 smmap==5.0.2
     # via gitdb
-streamlit==1.54.0
-    # via opensigaps
 sympy==1.14.0
     # via
     #   onnx-ir
