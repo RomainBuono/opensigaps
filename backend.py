@@ -46,7 +46,7 @@ except ImportError:
     SentenceTransformer = None  # type: ignore
 
 
-ONNX_MODEL_DIR = str(Path(__file__).parent / "models" / "multilingual-e5-small-onnx")
+ONNX_MODEL_DIR = str(Path(__file__).parent / "models" / "bge-m3-onnx-int8")
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ def load_embed_model(onnx_dir: str = ONNX_MODEL_DIR):
             logger.warning("Échec chargement ONNX (%s), tentative PyTorch", e)
     if _ST_AVAILABLE:
         try:
-            model = SentenceTransformer("intfloat/multilingual-e5-small")
+            model = SentenceTransformer("BAAI/bge-m3")
             logger.info("Modèle chargé via sentence-transformers (PyTorch)")
             return model, "pytorch"
         except Exception as e:
@@ -544,13 +544,17 @@ def get_embed_backend() -> str:
 def _e5_encode(
     model,
     texts: list[str],
-    prefix: str = "query",
+    prefix: str = "query",  # Conservé dans la signature pour la rétrocompatibilité
     batch_size: int = 256,
     normalize: bool = True,
 ) -> "np.ndarray":
-    prefixed = [f"{prefix}: {t}" for t in texts]
+    """
+    Encode les textes avec BAAI/bge-m3. 
+    Note d'architecture : Ce modèle ne nécessite PAS de préfixes (contrairement à e5 utilisé précedemment) 
+    L'argument 'prefix' est donc volontairement ignoré ici.
+    """
     embs = model.encode(
-        prefixed,
+        texts,  # On passe directement les textes bruts, sans le f"{prefix}: "
         batch_size=batch_size,
         normalize_embeddings=normalize,
         show_progress_bar=False,
@@ -675,6 +679,7 @@ class Article:
     openalex_id: str = ""
     nlm_unique_id: str = ""
     rank_source: str = "heuristique"
+    concepts: str = "" # Stocke les MeSH ou Keywords
 
     def calculate_points(self) -> float:
         return self.presence_score()
@@ -960,6 +965,20 @@ class PubMedFetcher:
             if id_tag.get("IdType") == "doi":
                 doi = id_tag.text or ""
                 break
+        # --- Extraction MeSH & Keywords (Système Fallback) ---
+        concepts_list = []
+        # Priorité 1 : Les termes MeSH (Pureté)
+        mesh_list = art_tag.findall(".//MeshHeadingList/MeshHeading/DescriptorName")
+        if mesh_list:
+            concepts_list = [m.text for m in mesh_list if m.text]
+        else:
+            # Priorité 2 : Author Keywords si pas encore indexé MeSH (Immédiateté)
+            kw_list = art_tag.findall(".//KeywordList/Keyword")
+            if kw_list:
+                concepts_list = [k.text for k in kw_list if k.text]
+        
+        concepts = " ".join(concepts_list)
+        #---
         authors = self._extract_authors(art_tag)
         nb_authors = len(authors)
         position = self._find_position(authors, target_last_name, nb_authors)
@@ -978,6 +997,7 @@ class PubMedFetcher:
             nb_authors=nb_authors,
             nlm_unique_id=nlm_id,
             rank_source=rank_source,
+            concepts=concepts,
         )
 
     @staticmethod
@@ -1105,7 +1125,7 @@ class ScopusFetcher:
                         "field": (
                             "dc:title,prism:publicationName,prism:doi,"
                             "prism:coverDate,dc:creator,author,prism:issn,"
-                            "eid,citedby-count"
+                            "eid,citedby-count,authkeywords"
                         ),
                     },
                     timeout=REQUEST_TIMEOUT,
@@ -1230,6 +1250,11 @@ class ScopusFetcher:
         journal = (entry.get("prism:publicationName") or "Revue Inconnue").strip()
         doi = (entry.get("prism:doi") or "").strip()
         eid = (entry.get("eid") or "").strip()
+        # --- Extraction Author Keywords Scopus ---
+            # Scopus renvoie souvent une chaîne séparée par des "|"
+        raw_keywords = entry.get("authkeywords", "")
+        concepts = raw_keywords.replace("|", " ").strip() if raw_keywords else ""
+        # ---
 
         # Auteurs
         raw_authors = entry.get("author", [])
@@ -1257,6 +1282,7 @@ class ScopusFetcher:
             estimated_rank=rank,
             rank_source=rank_source,
             nb_authors=nb_authors,
+            concepts=concepts,
         )
 
 

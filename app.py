@@ -21,6 +21,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+import copy
+
 from backend import (
     C1_COEFFICIENTS,
     C2_COEFFICIENTS,
@@ -45,7 +47,7 @@ from backend import (
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-st.set_page_config(page_title="OpenSIGAPS", page_icon="🧬", layout="wide")
+st.set_page_config(page_title="OpenSIGAPS", page_icon="🧬", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown(
     """
@@ -95,10 +97,39 @@ st.markdown(
 }
 
 /* ── MASQUER LE CHROME STREAMLIT ── */
-#MainMenu, footer, header,
+#MainMenu, footer,
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
-[data-testid="stStatusWidget"] { display: none !important; }
+[data-testid="stStatusWidget"] { 
+    display: none !important; 
+}
+
+/* Le header doit rester au premier plan pour que le bouton soit cliquable */
+header { 
+    background: transparent !important; 
+    box-shadow: none !important;
+    z-index: 999999 !important; /* Force le passage au-dessus du fond */
+}
+
+/* Le bouton pour rouvrir la sidebar */
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: var(--navy) !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--shadow-sm) !important;
+    margin-top: 15px !important;
+    margin-left: 15px !important;
+    z-index: 999999 !important; /* Priorité absolue à l'affichage */
+}
+
+[data-testid="collapsedControl"]:hover {
+    background: var(--bg-hover) !important;
+    color: var(--blue) !important;
+}
 
 /* ── FOND PRINCIPAL ── */
 [data-testid="stAppViewContainer"], .main {
@@ -544,6 +575,77 @@ input[type="checkbox"] { accent-color: var(--blue) !important; }
 ALL_POSITIONS = ["1er", "2ème", "3ème", "ADA", "Dernier", "Autre"]
 ALL_RANKS = ["A+", "A", "B", "C", "D", "E", "NC"]
 
+# ─────────────────────────────────────────────
+# TAXONOMIE ÉDITORIALE & MATRICE EBM
+# ─────────────────────────────────────────────
+
+STUDY_TYPES = {
+    "🏥 Recherche Clinique": [
+        "Essai Clinique Randomisé (Phase 2/3)",
+        "Étude Rétrospective / Cohorte / RWE",
+        "Cas Clinique (Case Report)"
+    ],
+    "🔬 Recherche Fondamentale": [
+        "Étude Préclinique (In vitro / Animal)",
+        "Étude Translationnelle (Biomarqueurs / Génomique)"
+    ],
+    "🌍 Santé Publique & Méthodologie": [
+        "Méta-analyse / Revue de la littérature",
+        "Qualité de vie / Économie de la santé",
+        "Protocole d'étude"
+    ],
+    "✍️ Expertise & Opinion": [
+        "Guidelines / Consensus",
+        "Lettre à l'éditeur / Communication brève"
+    ]
+}
+
+# Génération de la liste plate formatée pour le menu déroulant Streamlit
+FORMATTED_STUDY_OPTIONS = [
+    f"{univers} ❯ {study}" 
+    for univers, studies in STUDY_TYPES.items() 
+    for study in studies
+]
+
+# Matrice EBM : { "Type d'étude": { "Rang": Multiplicateur } }
+# Tout ce qui n'est pas déclaré ici recevra un multiplicateur neutre de 1.0
+EBM_MATRIX = {
+    "Essai Clinique Randomisé (Phase 2/3)": {
+        # Bonus agressif en haut, pénalité sévère en bas. On veut du A+/A/B.
+        "A+": 1.5, "A": 1.3, "B": 1.1, "C": 0.8, "D": 0.5, "E": 0.3, "NC": 0.5
+    },
+    
+    "Étude Rétrospective / Cohorte / RWE": {
+        # Quasi-impossible en A+, très dur en A. Cœur de cible : Q2/Q3 (B/C/D).
+        "A+": 0.3, "A": 0.6, "B": 0.9, "C": 1.2, "D": 1.2, "E": 1.1, "NC": 1.0
+    },
+    
+    "Cas Clinique (Case Report)": {
+        # Éliminatoire en A/B. Bonus GIGANTESQUE pour D et NC (souvent les revues Open Access dédiées).
+        "A+": 0.01, "A": 0.05, "B": 0.1, "C": 0.6, "D": 1.8, "E": 1.5, "NC": 2.0
+    },
+    
+    "Protocole d'étude": {
+        # Les grandes revues n'en veulent pas. Les revues de rang C/D (ex: Trials) et NC en raffolent.
+        "A+": 0.0, "A": 0.1, "B": 0.3, "C": 1.2, "D": 1.5, "E": 1.2, "NC": 1.8
+    },
+    
+    "Guidelines / Consensus": {
+        # Format roi pour les grandes revues. Ne pas gâcher ça dans une revue D ou E.
+        "A+": 1.5, "A": 1.4, "B": 1.2, "C": 0.9, "D": 0.6, "E": 0.4, "NC": 0.6
+    },
+    
+    "Méta-analyse / Revue de la littérature": {
+        # Passe partout, mais les grandes revues sont preneuses des excellentes méta-analyses.
+        "A+": 1.2, "A": 1.2, "B": 1.1, "C": 1.0, "D": 0.8, "E": 0.7, "NC": 0.9
+    },
+    
+    "Étude Préclinique (In vitro / Animal)": {
+        # Souvent dans des revues A/B de recherche fondamentale. Légère pénalité sur le bas de tableau clinique.
+        "A+": 1.1, "A": 1.1, "B": 1.0, "C": 1.0, "D": 0.8, "E": 0.8, "NC": 0.9
+    }
+}
+
 
 # ─────────────────────────────────────────────
 # HELPERS UI (Fonctions globales d'affichage)
@@ -841,10 +943,10 @@ with st.sidebar:
         _ns = "Installez optimum[onnxruntime] ou sentence-transformers."
     elif _embed_backend == "onnx":
         _nb, _nl, _nt = "rgba(5,150,105,0.07)", "#059669", "⚡ ONNX Runtime"
-        _ns = f"multilingual-e5-small · {len(_ref_db):,} journaux indexés"
+        _ns = f"bge-m3 · {len(_ref_db):,} journaux indexés"
     else:
         _nb, _nl, _nt = "rgba(37,99,235,0.07)", "#2563eb", "🧠 PyTorch actif"
-        _ns = f"multilingual-e5-small · {len(_ref_db):,} journaux indexés"
+        _ns = f"bge-m3 · {len(_ref_db):,} journaux indexés"
     st.markdown(
         f"<div style='background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.20);"
         f"border-radius:8px;padding:9px 13px;"
@@ -2082,7 +2184,7 @@ Les articles en doublon (identifiés par leur DOI ou leur titre) sont fusionnés
 **Étape 2 — Inférence de Domaine et Encodage Sémantique**
 
 * **Détection du domaine :** L'algorithme analyse le titre pour détecter la grande famille clinique (ex: Oncologie, Hématologie) à l'aide d'un moteur d'inférence hiérarchique.
-* **Vectorisation :** Chaque titre (requête + articles récupérés) est encodé en un vecteur dense de 384 dimensions par **multilingual-e5-small** (Microsoft, 2023), un modèle Transformer multilingue optimisé pour la similarité de phrases. Le backend ONNX Runtime permet une inférence ultra-rapide (~8 ms par phrase).
+* **Vectorisation :** Chaque titre (requête + articles récupérés) est encodé en un vecteur dense de 384 dimensions par **bge-m3** (Microsoft, 2023), un modèle Transformer multilingue optimisé pour la similarité de phrases. Le backend ONNX Runtime permet une inférence ultra-rapide (~8 ms par phrase).
 
 **Étape 3 — Agrégation et Boost Thématique**
 
@@ -2313,7 +2415,7 @@ with tab_journal:
 
     # ──────────────────────────────────────────────────────────────────────────
     # SOUS-ONGLET B — AIDE AU CHOIX D'UN JOURNAL (NLP)
-    # Suggestion par titre d'article avec multilingual-e5-small
+    # Suggestion par titre d'article avec bge-m3
     # ──────────────────────────────────────────────────────────────────────────
 
     with sub_tab_suggest:
@@ -2330,12 +2432,21 @@ with tab_journal:
 
         with st.form(key="suggest_form", enter_to_submit=False):
             article_title_input = st.text_area(
-                "Titre de votre article (purifié)",
+                "Titre de votre article",
                 placeholder=(
                     "Ex: Propensity-Score Matched Deferasirox allogeneic hematopoietic stem cell transplantation AML MDS"
                 ),
                 height=90,
             )
+
+            # --- Le sélecteur de type d'étude ---
+            selected_study_full = st.selectbox(
+                "Type de manuscrit (Filtre Éditorial)",
+                options=FORMATTED_STUDY_OPTIONS,
+                index=1, # Par défaut sur "Étude Rétrospective" (le plus courant)
+                help="Applique des filtres de réalité éditoriale (ex: pénalise les grandes revues pour un Case Report)."
+            )
+
             suggest_btn = st.form_submit_button(
                 "🧠 Trouver des journaux cibles",
                 help=(
@@ -2498,7 +2609,7 @@ with tab_journal:
             with _f4:
                 _sort_by = st.selectbox(
                     "Trier par",
-                    ["Rang SIGAPS puis IF", "Score de pertinence", "IF", "Rang seul"],
+                    ["Score de pertinence", "Rang SIGAPS puis IF", "IF", "Rang seul"],
                     index=0,
                     key="suggest_sort_by",
                 )
@@ -2512,6 +2623,22 @@ with tab_journal:
                     return 0.0
 
             filtered = list(raw_suggestions)
+
+            # --- Application de la Matrice EBM ---
+
+            # Deepcopy pour ne pas corrompre le session_state ---
+            filtered = copy.deepcopy(raw_suggestions)
+            # On extrait le type d'étude pur (sans l'Univers)
+            pure_study_type = selected_study_full.split(" ❯ ")[1]
+            
+            for s in filtered:
+                # On récupère le coeff (1.0 par défaut si non spécifié)
+                coeff = EBM_MATRIX.get(pure_study_type, {}).get(s.rank_sigaps, 1.0)
+                
+                # Règle d'or : On ne touche pas au similarity_score original pour garder l'intégrité
+                # mathématique affichée, mais on modifie le score pondéré pour l'ordre de tri.
+                s.similarity_score = s.similarity_score * coeff
+            # -----------------------------------------------
             
             if filter_ranks:
                 filtered = [s for s in filtered if s.rank_sigaps in filter_ranks]

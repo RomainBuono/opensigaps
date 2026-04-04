@@ -36,10 +36,19 @@ class CosineSemanticRanker(SemanticRanker):
         if not articles or query.embedding_vector is None:
             return []
 
-        # 1. Vectorisation des articles candidats (Batch)
-        article_titles = [f"passage: {a.title}" for a in articles]
+        # 1. Vectorisation Asymétrique des articles candidats (Batch)
+        article_texts = []
+        for a in articles:
+            # On construit le super-vecteur : Titre pur + Concepts purs
+            text = a.title
+            # On utilise getattr pour éviter un crash si l'objet Article est une ancienne version en cache
+            if getattr(a, "concepts", ""):
+                text += f". {a.concepts}"
+            article_texts.append(text)
+
         try:
-            art_vecs = self._embedder.encode(article_titles, normalize_embeddings=True, convert_to_numpy=True)
+            # Note : on retire le préfixe 'passage:' qui était spécifique à e5. bge-m3 n'en a pas besoin.
+            art_vecs = self._embedder.encode(article_texts, normalize_embeddings=True, convert_to_numpy=True)
         except Exception:
             return []
 
