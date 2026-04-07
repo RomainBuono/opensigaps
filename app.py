@@ -104,31 +104,11 @@ st.markdown(
     display: none !important; 
 }
 
-/* Le header doit rester au premier plan pour que le bouton soit cliquable */
-header { 
+/* ── GESTION DU HEADER (Bandeau haut) ── */
+/* Sur ordinateur : transparent. Sur mobile : opaque (géré plus bas) */
+header[data-testid="stHeader"] { 
     background: transparent !important; 
     box-shadow: none !important;
-    z-index: 999999 !important; /* Force le passage au-dessus du fond */
-}
-
-/* Le bouton pour rouvrir la sidebar */
-[data-testid="collapsedControl"] {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    color: var(--navy) !important;
-    background: var(--bg-surface) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: 8px !important;
-    box-shadow: var(--shadow-sm) !important;
-    margin-top: 15px !important;
-    margin-left: 15px !important;
-    z-index: 999999 !important; /* Priorité absolue à l'affichage */
-}
-
-[data-testid="collapsedControl"]:hover {
-    background: var(--bg-hover) !important;
-    color: var(--blue) !important;
 }
 
 /* ── FOND PRINCIPAL ── */
@@ -142,12 +122,42 @@ header {
         radial-gradient(ellipse 60% 45% at 95% 100%, rgba(200,146,26,0.06) 0%, transparent 55%),
         radial-gradient(ellipse 40% 30% at 50% 50%, rgba(30,58,95,0.02) 0%, transparent 70%);
 }
+
+/* ── PADDING DU CONTENU (DESKTOP) ── */
 .block-container {
     background: transparent !important;
-    padding: 1.5rem 2.5rem 4rem !important;
+    padding: 3rem 2.5rem 4rem 2.5rem !important; /* Marge haute de sécurité */
     max-width: 1400px !important;
     position: relative; z-index: 1;
     font-family: var(--font-body) !important;
+}
+
+/* 📱 ── ADAPTATION MOBILE NATIVE ── 📱 */
+@media screen and (max-width: 992px) {
+    /* 1. On donne un fond opaque au bandeau de Streamlit */
+    header[data-testid="stHeader"] {
+        background-color: var(--bg-surface) !important;
+        border-bottom: 1px solid var(--border-subtle) !important;
+    }
+
+    /* 2. On maquille le bouton existant (SANS FORCER SON AFFICHAGE) */
+    [data-testid="collapsedControl"] {
+        background: var(--blue-dim) !important;
+        border: 1px solid var(--blue-border) !important;
+        border-radius: 8px !important;
+        color: var(--blue) !important;
+        margin: 8px 12px !important;
+    }
+    [data-testid="collapsedControl"] svg {
+        fill: var(--blue) !important;
+    }
+
+    /* 3. On pousse le texte vers le bas pour qu'il ne glisse plus sous le bandeau */
+    .block-container {
+        padding-top: 5rem !important; /* Laisse 80px de vide en haut */
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
 }
 
 /* ── SIDEBAR ── */
@@ -756,6 +766,77 @@ def _journal_card(jr, position: str, nb_authors: int, show_similarity: bool = Fa
     if separator:
         st.markdown('<div style="height:1px;background:#dde6f5;margin:6px 0 12px;"></div>', unsafe_allow_html=True)
 
+# 1. Ajoute le paramètre key_suffix dans la définition
+def _render_if_history(nlm_id: str, key_suffix: str = "") -> None:
+    """Génère un joli graphique Plotly de l'historique de l'Impact Factor."""
+    from backend import get_ref_db
+    import plotly.graph_objects as go
+    import streamlit as st
+
+    if not nlm_id:
+        return
+        
+    db = get_ref_db()
+    if not db.loaded:
+        return
+        
+    history = db.get_history(nlm_id)
+    years = sorted([y for y in history.keys() if "if" in history[y] and history[y]["if"]])
+    
+    if not years:
+        return 
+
+    ifs = []
+    for y in years:
+        try:
+            ifs.append(float(history[y]["if"]))
+        except ValueError:
+            ifs.append(0.0)
+
+    with st.expander("📈 Évolution de l'Impact Factor", expanded=False):
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=years, 
+            y=ifs,
+            mode='lines+markers',
+            line=dict(color='#2563eb', width=3, shape='spline'),
+            marker=dict(size=8, color='#ffffff', line=dict(color='#2563eb', width=2)),
+            fill='tozeroy',
+            fillcolor='rgba(37,99,235,0.08)',
+            name='Impact Factor',
+            hovertemplate='<b>Année %{x}</b><br>IF : %{y:.3f}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            margin=dict(l=10, r=10, t=10, b=10),
+            height=220,
+            font=dict(family="Sora, sans-serif", size=11, color="#6b7fa3"),
+            xaxis=dict(
+                tickmode='array', 
+                tickvals=years, 
+                ticktext=[str(y) for y in years],
+                showgrid=False,
+                fixedrange=True
+            ),
+            yaxis=dict(
+                showgrid=True, 
+                gridcolor='#dde6f5', 
+                zeroline=False,
+                fixedrange=True
+            ),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            hovermode="x unified"
+        )
+        
+        # 2. 🚀 AJOUT DE LA CLÉ UNIQUE ICI
+        st.plotly_chart(
+            fig, 
+            use_container_width=True, 
+            config={'displayModeBar': False},
+            key=f"if_chart_{nlm_id}_{key_suffix}" # Identifiant unique garanti !
+        )
+
 
 # ─────────────────────────────────────────────
 # MODÈLE D'EMBEDDING — ONNX > PyTorch > Jaccard
@@ -983,7 +1064,7 @@ with st.sidebar:
 st.markdown(
     "**OpenSIGAPS** est une plateforme d'aide à la décision conçue pour les chercheurs et "
     "les directions de la recherche. Elle permet d'estimer instantanément la valorisation "
-    "scientifique (Impact Factor)et financière (MERRI) de vos publications et d'identifier par IA "
+    "scientifique (Impact Factor) et financière (MERRI) de vos publications et d'identifier par IA "
     "les journaux les plus stratégiques pour soumettre vos futurs manuscrits."
 )
 
@@ -1042,38 +1123,35 @@ with tab_analyse:
     # MODE INDIVIDUEL
     # ════════════════════════════════════════════════
     if _mode == "👤 Individuel":
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            researcher_name = st.text_input(
-                "Nom du chercheur (Prénom Nom)",
-                placeholder="Ex: Romain Buono",
-            )
-        with col2:
-            search_btn = st.button("🚀 Lancer l'analyse", use_container_width=True)
+        with st.form(key="form_individuel"):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                researcher_name = st.text_input(
+                    "Nom du chercheur (Prénom Nom)",
+                    placeholder="Ex: Romain Buono",
+                )
+            with col2:
+                st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True) # Alignement vertical
+                search_btn = st.form_submit_button("🚀 Lancer l'analyse", use_container_width=True)
 
-        # Champs optionnels anti-homonymes (repliés par défaut)
-        with st.expander(
-            "🏥 Préciser l'affiliation pour éviter les homonymes (optionnel)"
-        ):
-            _aff_col1, _aff_col2 = st.columns(2)
-            with _aff_col1:
-                affiliation_filter = st.text_input(
-                    "Établissement / Affiliation",
-                    placeholder="Ex: Centre Léon Bérard, Hospices Civils de Lyon",
-                    help=(
-                        "Filtrage post-récupération : seuls les articles dont "
-                        "au moins une affiliation contient ce terme seront conservés. "
-                        "Laissez vide pour ne pas filtrer."
-                    ),
-                    key="individuel_affiliation",
-                )
-            with _aff_col2:
-                city_filter = st.text_input(
-                    "Ville professionnelle",
-                    placeholder="Ex: Lyon, Paris, Bordeaux",
-                    help="Combiné à l'affiliation pour affiner la discrimination.",
-                    key="individuel_city",
-                )
+            # Champs optionnels anti-homonymes
+            with st.expander(
+                "🏥 Préciser l'affiliation pour éviter les homonymes (optionnel)"
+            ):
+                _aff_col1, _aff_col2 = st.columns(2)
+                with _aff_col1:
+                    affiliation_filter = st.text_input(
+                        "Établissement / Affiliation",
+                        placeholder="Ex: Centre Léon Bérard, Hospices Civils de Lyon",
+                        help="Filtrage post-récupération...",
+                        key="individuel_affiliation",
+                    )
+                with _aff_col2:
+                    city_filter = st.text_input(
+                        "Ville professionnelle",
+                        placeholder="Ex: Lyon, Paris, Bordeaux",
+                        key="individuel_city",
+                    )
 
         if search_btn and researcher_name:
             if len(researcher_name) > 80:
@@ -1398,52 +1476,53 @@ with tab_analyse:
             "Saisissez les noms des membres de votre équipe (un par ligne). "
             "Chaque chercheur sera interrogé individuellement, puis les résultats seront consolidés."
         )
-        # Champs optionnels anti-homonymes pour l'équipe entière
-        with st.expander(
-            "🏥 Filtrer par affiliation commune (optionnel — recommandé pour les équipes)"
-        ):
-            _taff_col1, _taff_col2 = st.columns(2)
-            with _taff_col1:
-                team_affiliation = st.text_input(
-                    "Établissement / Affiliation commune",
-                    placeholder="Ex: Hôpital Lariboisière, APHP",
-                    key="team_affiliation",
-                )
-            with _taff_col2:
-                team_city = st.text_input(
-                    "Ville",
-                    placeholder="Ex: Paris",
-                    key="team_city",
-                )
-            if team_affiliation or team_city:
-                st.caption(
-                    "⚠️ Ce filtre interroge l'API Entrez pour récupérer les affiliations — "
-                    "il allonge légèrement la durée de recherche."
-                )
+        
+        with st.form(key="form_equipe"):
+            # Champs optionnels anti-homonymes pour l'équipe entière
+            with st.expander(
+                "🏥 Filtrer par affiliation commune (optionnel — recommandé pour les équipes)"
+            ):
+                _taff_col1, _taff_col2 = st.columns(2)
+                with _taff_col1:
+                    team_affiliation = st.text_input(
+                        "Établissement / Affiliation commune",
+                        placeholder="Ex: Hôpital Lariboisière, APHP",
+                        key="team_affiliation",
+                    )
+                with _taff_col2:
+                    team_city = st.text_input(
+                        "Ville",
+                        placeholder="Ex: Paris",
+                        key="team_city",
+                    )
+                if team_affiliation or team_city:
+                    st.caption("⚠️ Ce filtre interroge l'API Entrez pour récupérer les affiliations...")
 
-        default_team = st.session_state.get("team_names_input", "")
-        team_names_raw = st.text_area(
-            "Membres de l'équipe (Prénom Nom, un par ligne)",
-            value=default_team,
-            height=150,
-            placeholder="Romain Buono\nJean Dupont\nMarie Martin",
-        )
-        st.session_state["team_names_input"] = team_names_raw
+            default_team = st.session_state.get("team_names_input", "")
+            team_names_raw = st.text_area(
+                "Membres de l'équipe (Prénom Nom, un par ligne)",
+                value=default_team,
+                height=150,
+                placeholder="Romain Buono\nJean Dupont\nMarie Martin",
+                key="team_names_input" # Géré automatiquement par le form
+            )
+
+            col_btn1, col_btn2 = st.columns([2, 1])
+            with col_btn1:
+                team_search_btn = st.form_submit_button(
+                    "🚀 Analyser l'équipe (Ctrl+Entrée)",
+                    use_container_width=True,
+                )
+            with col_btn2:
+                reset_btn = st.form_submit_button("🗑️ Réinitialiser", use_container_width=True)
+
+        if reset_btn:
+            st.session_state.team_results = {}
+            st.session_state.team_member_arts = {}
+            st.session_state.team_names_input = ""
+            st.rerun()
 
         team_names = [n.strip() for n in team_names_raw.splitlines() if n.strip()]
-
-        col_btn1, col_btn2 = st.columns([2, 1])
-        with col_btn1:
-            team_search_btn = st.button(
-                f"🚀 Analyser l'équipe ({len(team_names)} membre{'s' if len(team_names) != 1 else ''})",
-                width="stretch",
-                disabled=(len(team_names) == 0),
-            )
-        with col_btn2:
-            if st.button("🗑️ Réinitialiser", width="stretch"):
-                st.session_state.team_results = {}
-                st.session_state.team_member_arts = {}
-                st.rerun()
 
         if team_search_btn and team_names:
             search_service = FederatedSearch(ref_db=_ref_db)
@@ -2166,56 +2245,51 @@ Un chercheur avec les publications suivantes (fenêtre 4 ans) :
 
     st.header("7. Algorithme d'aide au choix du journal")
     st.markdown("""
-L'onglet **🔎 Quel journal choisir ?** intègre un moteur de suggestion sémantique permettant,
-à partir du titre d'un article en préparation, d'identifier les journaux SIGAPS les plus pertinents
-pour sa soumission.
+L'onglet **🔎 Quel journal choisir ?** intègre un moteur de suggestion sémantique (NLP) de pointe, couplé à des règles de publication basées sur les preuves (Matrice EBM). 
+Voici comment votre titre est analysé en 5 étapes :
 
 #### Architecture du pipeline de données
 
-**Étape 1 — Recherche Fédérée (PubMed + Scopus)**
-
-Le titre soumis est d'abord "purifié" par le système (retrait des stopwords et du jargon méthodologique pour isoler l'essence biomédicale).
-Il est ensuite envoyé simultanément à deux bases de données via notre orchestrateur de recherche :
-* **PubMed (API Entrez) :** L'algorithme utilise une stratégie d'élargissement dynamique ("Smart Fetching"). Il cherche d'abord la combinaison stricte des mots-clés, puis élargit progressivement sa requête jusqu'à accumuler un volume de contexte suffisant (minimum 50 articles) pour garantir la pertinence statistique.
-* **Scopus (API Elsevier) :** Vient enrichir le corpus pour capter des publications pertinentes non exclusives à Medline.
-
-Les articles en doublon (identifiés par leur DOI ou leur titre) sont fusionnés pour créer un pool candidat unique et propre.
+**Étape 1 — Recherche Fédérée en Cascade (PubMed + Scopus)**
+Le titre soumis est d'abord purifié pour isoler son essence biomédicale. Il est envoyé à :
+* **PubMed :** L'algorithme utilise une cascade à 6 niveaux ("Smart Fetching"). Il cherche d'abord le titre exact, puis croise les mots-clés spécifiques, puis interroge les termes MeSH canoniques, et élargit jusqu'à obtenir un contexte suffisant.
+* **Scopus :** Vient enrichir le corpus avec une recherche thématique ciblée pour capter des publications pertinentes non exclusives à Medline.
 
 **Étape 2 — Inférence de Domaine et Encodage Sémantique**
+* **Détection du domaine :** L'outil détecte la grande famille clinique (ex: Oncologie, Hématologie) via un moteur d'inférence hiérarchique.
+* **Vectorisation :** Chaque titre (requête + articles récupérés) est transformé en un vecteur dense de 1024 dimensions par **bge-m3** (BAAI, 2024), un modèle Transformer multilingue optimisé pour la similarité sémantique. L'utilisation d'un backend ONNX Runtime quantifié permet une inférence ultra-rapide et parallélisée.
 
-* **Détection du domaine :** L'algorithme analyse le titre pour détecter la grande famille clinique (ex: Oncologie, Hématologie) à l'aide d'un moteur d'inférence hiérarchique.
-* **Vectorisation :** Chaque titre (requête + articles récupérés) est encodé en un vecteur dense de 384 dimensions par **bge-m3** (Microsoft, 2023), un modèle Transformer multilingue optimisé pour la similarité de phrases. Le backend ONNX Runtime permet une inférence ultra-rapide (~8 ms par phrase).
+**Étape 3 — Agrégation Hybride (Protection de la "Pépite")**
+La similarité cosinus est calculée entre votre titre et les articles candidats : `sim(article) = cos(v_requête, v_article)`.
+Au lieu d'additionner naïvement les scores (ce qui favoriserait les "Mega-Journals" publiant des milliers d'articles moyens), le système utilise un **Algorithme Hybride** :
+1. Il retient la **similarité maximale** (la "pépite d'or", soit l'article le plus proche de votre titre).
+2. Il ajoute un **micro-bonus de consistance** (+0.02 par article supplémentaire dans le même thème).
+3. Il applique un **Boost Thématique** si le journal est historiquement aligné avec le domaine clinique détecté.
 
-**Étape 3 — Agrégation et Boost Thématique**
+> **Score_Brut(journal)** = Max( Sim_Article × Boost_Thématique ) + Bonus_Volume
 
-La similarité cosinus est calculée entre le vecteur du titre soumis et chacun des vecteurs des articles candidats : `sim(article) = cos(v_requête, v_article)`.
+**Étape 4 — Le Filtre Éditorial (Matrice EBM)**
+La pertinence sémantique ne fait pas tout : la réalité éditoriale est reine. Un "Cas Clinique" avec 95% de pertinence sémantique ne sera probablement jamais acceptée dans le *Lancet* (Rang A+). 
+L'algorithme pondère le score brut via une **Matrice EBM (Evidence-Based Medicine)** selon le type de manuscrit déclaré :
+* *Ex : Un "Essai Randomisé" reçoit un multiplicateur bonus pour les grandes revues (A+/A).*
+* *Ex : Un "Cas Clinique" voit son score lourdement pénalisé pour les revues A et B, mais propulsé pour les revues D et NC (souvent des revues Open Access spécialisées).*
 
-Les scores sont ensuite agrégés par journal en s'appuyant sur des clés primaires strictes (`NLM_ID` pour les articles PubMed, `ISSN` ou nom de la revue pour Scopus). 
-Le système applique ici un **Boost Thématique** : si l'empreinte mathématique globale du journal est fortement alignée avec le domaine clinique détecté à l'Étape 2, le score de ses articles est bonifié.
-
-> **score_brut(journal)** = Σ [ sim(article) × (1 + boost_thématique) ]
-
-Le **score de pertinence affiché (%)** est la normalisation de ce score brut par rapport au meilleur journal du corpus.
-
-**Étape 4 — Réconciliation SIGAPS et Filtrage**
-
-La liste des journaux générée par l'Intelligence Artificielle est confrontée au référentiel officiel `sigaps_ref.csv`. La jointure est réalisée de manière déterministe (priorité absolue au NLM_ID) pour garantir l'exactitude du Rang SIGAPS, de l'Impact Factor et du statut d'indexation Medline.
-
-Le backend transmet alors un large panel de revues (Top 50) à l'interface. C'est à ce stade que vos filtres interactifs (*Medline only*, *IF minimum*, *Rangs acceptés*) sont appliqués en temps réel pour masquer les revues hors-périmètre. Les résultats survivants sont classés par défaut par **rang SIGAPS** (A+ → NC) puis **IF décroissant**.
+**Étape 5 — Réconciliation SIGAPS et Restitution**
+La liste finale est confrontée au référentiel officiel `sigaps_ref.csv` (jointure déterministe par NLM_ID ou ISSN) pour garantir l'exactitude du Rang SIGAPS et de l'Impact Factor. Le système vous restitue une interface épurée avec le Top 10, tout en vous laissant la possibilité d'explorer la "longue traîne" des résultats.
     """)
 
     st.header("7b. Optimiser l'IA (Le Prompt Engineering)")
     st.markdown("""
-Notre algorithme de similarité Cosinus (le *SemanticRanker*) est un "sniper" sémantique. Il compare l'empreinte mathématique de votre titre avec celles des articles de PubMed.
+Notre algorithme de similarité (le *SemanticRanker*) agit comme un "sniper" sémantique. Il compare l'empreinte mathématique de votre titre avec celles des millions d'articles indexés.
 
 **Comment adapter vos requêtes ?**
-Si l'algorithme lit des mots longs comme *"development"*, *"validation"*, *"retrospective"*, ou *"operationalise"*, il va leur accorder un poids important, pensant qu'il s'agit de termes médicaux clés. Résultat : il cherchera des articles ayant la même **méthodologie** plutôt que la même **pathologie**, ce qui faussera les suggestions de journaux (effet "Mega-Journals" comme *Scientific Reports* ou *PLoS One*).
+Si l'algorithme lit des mots génériques de recherche comme *"development"*, *"validation"*, *"retrospective"*, ou *"operationalise"*, il va leur accorder un poids démesuré. Résultat : il vous proposera des journaux ayant la même **méthodologie** plutôt que la même **pathologie**.
 
 👉 **La règle d'or : Purifiez votre titre (Keyword Prompting)**
-Pour de meilleurs résultats, transformez votre titre en une suite de concepts clés.
+Pour obtenir des recommandations chirurgicales, transformez votre titre en une suite de concepts médicaux clés.
 
-* **Mauvaise approche (Trop de bruit) :** *Development and validation of an occurrence-based healthy dietary diversity score easy to operationalise in dietary surveys.*
-* **Excellente approche (Concentrée) :** *Healthy dietary diversity score dietary surveys.*
+* ❌ **Mauvaise approche (Trop de bruit) :** *Development and validation of an occurrence-based healthy dietary diversity score easy to operationalise in dietary surveys.*
+* ✅ **Excellente approche (Concentrée) :** *Healthy dietary diversity score dietary surveys.*
 
 En retirant la "fluff" linguistique, vous forcez l'Intelligence Artificielle à se concentrer exclusivement sur votre biomarqueur, votre maladie ou votre cible clinique.
     """)
@@ -2304,33 +2378,26 @@ with tab_journal:
             key="sub_a_mode",
         )
 
+        # --- Deux formulaires distincts pour sécuriser la touche Entrée ---
         if search_mode == "Par titre de journal":
-            journal_query = st.text_input(
-                "Titre ou mot-clé du journal",
-                placeholder="Ex: Annals of Oncology · Blood · Frontiers in Medicine",
-                key="jq_title",
-            )
-            doi_query = ""
+            with st.form(key="form_know_title"):
+                journal_query = st.text_input(
+                    "Titre ou mot-clé du journal",
+                    placeholder="Ex: Annals of Oncology · Blood · Frontiers in Medicine",
+                )
+                doi_query = "" # On vide l'autre variable
+                search_journal_btn = st.form_submit_button("🔍 Rechercher")
+                
         else:
-            doi_query = st.text_input(
-                "DOI de l'article",
-                placeholder="Ex: 10.1182/blood.2023021234",
-                key="jq_doi",
-            )
-            journal_query = ""
+            with st.form(key="form_know_doi"):
+                doi_query = st.text_input(
+                    "DOI de l'article",
+                    placeholder="Ex: 10.1182/blood.2023021234",
+                )
+                journal_query = "" # On vide l'autre variable
+                search_journal_btn = st.form_submit_button("🔍 Rechercher")
 
-        search_journal_btn = st.button(
-            "🔍 Rechercher",
-            key="btn_jrnl_search",
-            disabled=(not journal_query.strip() and not doi_query.strip()),
-            help=(
-                "Recherche dans le NLM Catalog (API Entrez) et votre référentiel SIGAPS. "
-                "Retourne le rang SIGAPS, l'IF et les métadonnées du journal. "
-                "Fonctionne par titre de journal (ex: Blood, Annals of Oncology) ou par PMID d'article existant."
-            ),
-        )
-
-        if search_journal_btn:
+        if search_journal_btn and (journal_query.strip() or doi_query.strip()):
             st.divider()
 
             # ── MODE PMID ─────────────────────────────────────────────────────
@@ -2384,6 +2451,7 @@ with tab_journal:
                                 f"{' · '.join(art_data['authors'][:20])}</p>",
                                 unsafe_allow_html=True,
                             )
+                    _render_if_history(art_data["nlm_id"], key_suffix="doi")
 
             # ── MODE TITRE JOURNAL ────────────────────────────────────────────
             elif journal_query.strip():
@@ -2400,7 +2468,7 @@ with tab_journal:
                 else:
                     nb_j = len(journal_results)
                     st.subheader(
-                        f"{nb_j} journal{'aux' if nb_j > 1 else ''} "
+                        f"{nb_j} journa{'ux' if nb_j > 1 else 'l'} "
                         f"trouvé{'s' if nb_j > 1 else ''}"
                     )
                     for i, jr in enumerate(journal_results):
@@ -2410,8 +2478,15 @@ with tab_journal:
                             shared_nb_authors,
                             show_similarity=False,
                             expanded_calc=(i == 0),
-                            separator=(i < nb_j - 1),
+                            separator=False, # On coupe le séparateur interne
                         )
+                        
+                        # Le graphique d'évolution
+                        _render_if_history(jr.nlm_id, key_suffix=f"jrnl_{i}")
+                        
+                        # On trace le séparateur externe PROPREMENT
+                        if i < nb_j - 1:
+                            st.markdown('<div style="height:1px;background:#dde6f5;margin:6px 0 12px;"></div>', unsafe_allow_html=True)
 
     # ──────────────────────────────────────────────────────────────────────────
     # SOUS-ONGLET B — AIDE AU CHOIX D'UN JOURNAL (NLP)
@@ -2430,21 +2505,12 @@ with tab_journal:
             unsafe_allow_html=True
         )
 
-        with st.form(key="suggest_form", enter_to_submit=False):
-            article_title_input = st.text_area(
+        # 1. Le formulaire restreint à la barre de recherche
+        with st.form(key="suggest_form"):
+            # Remplacement par text_input : la touche "Entrée" valide désormais le formulaire !
+            article_title_input = st.text_input(
                 "Titre de votre article",
-                placeholder=(
-                    "Ex: Propensity-Score Matched Deferasirox allogeneic hematopoietic stem cell transplantation AML MDS"
-                ),
-                height=90,
-            )
-
-            # --- Le sélecteur de type d'étude ---
-            selected_study_full = st.selectbox(
-                "Type de manuscrit (Filtre Éditorial)",
-                options=FORMATTED_STUDY_OPTIONS,
-                index=1, # Par défaut sur "Étude Rétrospective" (le plus courant)
-                help="Applique des filtres de réalité éditoriale (ex: pénalise les grandes revues pour un Case Report)."
+                placeholder="Ex: Propensity-Score Matched Deferasirox allogeneic hematopoietic stem cell transplantation AML MDS",
             )
 
             suggest_btn = st.form_submit_button(
@@ -2455,7 +2521,16 @@ with tab_journal:
                 ),
             )
 
+        # 2. Le filtre est SORTI du formulaire (Auto-Update immédiat)
+        selected_study_full = st.selectbox(
+            "Type de manuscrit (Filtre Éditorial)",
+            options=FORMATTED_STUDY_OPTIONS,
+            index=1, 
+            help="Modifiez ce champ pour recalculer instantanément les scores sans refaire la recherche sur PubMed !"
+        )
+
         if suggest_btn and article_title_input.strip():
+            st.session_state.show_more_journals = False
             _cache_key = article_title_input.strip()
             if _cache_key != st.session_state.suggest_query_cache:
 
@@ -2706,7 +2781,7 @@ with tab_journal:
                             "Score pertinence (%)": int(s.similarity_score * 100),
                             "Articles similaires": s.matched_articles_count,
                         }
-                        for s in filtered[:30]
+                        for s in filtered[:50]
                     ]
                     _buf_sug = io.BytesIO()
                     with pd.ExcelWriter(_buf_sug, engine="openpyxl") as _xw:
@@ -2721,7 +2796,11 @@ with tab_journal:
                         width="stretch",
                     )
 
-                for i, sug in enumerate(filtered[:30]):
+                # --- Calcul de la limite d'affichage ---
+                show_all = st.session_state.get("show_more_journals", False)
+                nb_to_show = len(filtered) if show_all else min(10, len(filtered))
+                
+                for i, sug in enumerate(filtered[:nb_to_show]):
                     if i > 0:
                         st.markdown(
                             '<div style="margin:28px 0 20px;display:flex;align-items:center;gap:12px;">'
@@ -2804,6 +2883,20 @@ with tab_journal:
                                     unsafe_allow_html=True,
                                 )
 
+                    _render_if_history(sug.nlm_id, key_suffix=f"sug_{i}")
+
                     st.markdown(
                         '<div style="margin-bottom:4px;"></div>', unsafe_allow_html=True
                     )
+
+                # --- LE BOUTON "AFFICHER PLUS" ---
+                remaining_count = len(filtered) - 10
+                if not show_all and remaining_count > 0:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button(
+                        f"🔽 Explorer {remaining_count} revues supplémentaires (Pertinence réduite)", 
+                        use_container_width=True,
+                        type="secondary"
+                    ):
+                        st.session_state.show_more_journals = True
+                        st.rerun()

@@ -48,8 +48,15 @@ class CosineSemanticRanker(SemanticRanker):
 
         try:
             # Note : on retire le préfixe 'passage:' qui était spécifique à e5. bge-m3 n'en a pas besoin.
-            art_vecs = self._embedder.encode(article_texts, normalize_embeddings=True, convert_to_numpy=True)
-        except Exception:
+            art_vecs = self._embedder.encode(
+                article_texts, 
+                batch_size=32, 
+                normalize_embeddings=True, 
+                convert_to_numpy=True,
+                show_progress_bar=False 
+            )
+        except Exception as e:
+            logger.error(f"Erreur lors de la vectorisation NLP : {e}")
             return []
 
         # 2. Produit Scalaire

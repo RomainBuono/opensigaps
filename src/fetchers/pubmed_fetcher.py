@@ -88,22 +88,36 @@ class PubMedFetcher(ArticleFetcher):
             return []
 
     def _fetch_details(self, pmids: List[str]) -> List[Article]:
-        """Étape 2 : Télécharge et parse le XML pour les PMIDs trouvés."""
-        params = {
-            "db": "pubmed",
-            "id": ",".join(pmids),
-            "retmode": "xml"
-        }
-        if self.api_key:
-            params["api_key"] = self.api_key
+        """Étape 2 : Télécharge et parse le XML par paquets (Batching sécurisé)."""
+        articles = []
+        batch_size = 200  # Limite stricte pour ne pas faire exploser la taille de l'URL NCBI
+        
+        for i in range(0, len(pmids), batch_size):
+            batch_pmids = pmids[i : i + batch_size]
+            
+            params = {
+                "db": "pubmed",
+                "id": ",".join(batch_pmids),
+                "retmode": "xml"
+            }
+            if self.api_key:
+                params["api_key"] = self.api_key
 
-        try:
-            response = requests.get(self.BASE_URL_FETCH, params=params, timeout=15)
-            response.raise_for_status()
-            return self._parse_xml_to_articles(response.text)
-        except Exception as e:
-            print(f"⚠️ Erreur PubMed (efetch) : {e}")
-            return []
+            try:
+                response = requests.get(self.BASE_URL_FETCH, params=params, timeout=15)
+                response.raise_for_status()
+                
+                # On parse ce lot de 200 articles maximum
+                batch_articles = self._parse_xml_to_articles(response.text)
+                
+                # On verse les articles parsés dans notre liste globale
+                articles.extend(batch_articles)
+                
+            except Exception as e:
+                print(f"⚠️ Erreur PubMed (efetch) sur le lot {i} à {i+batch_size} : {e}")
+                continue # Si un paquet plante, on n'arrête pas l'application, on passe au suivant
+                
+        return articles
 
     def _parse_xml_to_articles(self, xml_data: str) -> List[Article]:
         """Parse le XML complexe de PubMed de manière défensive."""

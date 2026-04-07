@@ -23,6 +23,17 @@ from typing import Optional
 
 import numpy as np
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# ─── TURBO RÉSEAU : Client HTTP persistant & Pool de Threads ───
+http_client = requests.Session()
+retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
+http_client.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retries))
+
+# Ce pool global servira à lancer des requêtes en arrière-plan sans bloquer l'app
+background_executor = ThreadPoolExecutor(max_workers=4)
+# ───────────────────────────────────────────────────────────────
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -60,6 +71,13 @@ class _ONNXEmbedder:
     def __init__(self, model_dir: str) -> None:
         import onnxruntime as ort
 
+        # Configuration agressive pour exploiter 100% du CPU
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 2  # Le nombre de vCPU sur HF Spaces
+        sess_options.inter_op_num_threads = 2
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
         model_dir_path = Path(model_dir)
         quantized = model_dir_path / "model_quantized.onnx"
         standard = model_dir_path / "model.onnx"
@@ -69,10 +87,9 @@ class _ONNXEmbedder:
             model_path = str(standard)
         else:
             raise FileNotFoundError(f"Aucun fichier .onnx trouvé dans {model_dir}")
-        sess_opts = ort.SessionOptions()
-        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        
         self._session = ort.InferenceSession(
-            model_path, sess_options=sess_opts, providers=["CPUExecutionProvider"]
+            model_path, sess_options=sess_options, providers=["CPUExecutionProvider"]
         )
         self._out_name = self._session.get_outputs()[0].name
         self._tokenizer = AutoTokenizer.from_pretrained(model_dir)
@@ -545,7 +562,7 @@ def _e5_encode(
     model,
     texts: list[str],
     prefix: str = "query",  # Conservé dans la signature pour la rétrocompatibilité
-    batch_size: int = 256,
+    batch_size: int = 32,
     normalize: bool = True,
 ) -> "np.ndarray":
     """
@@ -739,7 +756,7 @@ def _filter_by_affiliation(
     pmids = [a.pmid for a in pubmed_articles]
 
     try:
-        resp = requests.get(
+        resp = http_client.get(
             f"{BASE}/efetch.fcgi",
             params={
                 "db": "pubmed",
@@ -858,7 +875,7 @@ class PubMedFetcher:
     ) -> tuple[list[str], int]:
         all_uids: list[str] = []
         try:
-            resp = requests.get(
+            resp = http_client.get(
                 f"{self.BASE_URL}/esearch.fcgi",
                 params={
                     "db": "pubmed",
@@ -885,7 +902,7 @@ class PubMedFetcher:
         retstart = len(all_uids)
         while retstart < min(total, limit):
             batch = min(batch_size, limit - retstart)
-            r = requests.get(
+            r = http_client.get(
                 f"{self.BASE_URL}/esearch.fcgi",
                 params={
                     "db": "pubmed",
@@ -914,7 +931,7 @@ class PubMedFetcher:
         for i in range(0, len(uids), batch_size):
             batch = uids[i : i + batch_size]
             try:
-                resp = requests.get(
+                resp = http_client.get(
                     f"{self.BASE_URL}/efetch.fcgi",
                     params={
                         "db": "pubmed",
@@ -1067,7 +1084,7 @@ class ScopusFetcher:
     """
 
     BASE_URL = "https://api.elsevier.com/content/search/scopus"
-    BATCH_SIZE: int = 200
+    BATCH_SIZE: int = 25
 
     def __init__(self, ref_db: Optional[SigapsRefDB] = None) -> None:
         self.ref_db = ref_db or _REF_DB
@@ -1099,22 +1116,21 @@ class ScopusFetcher:
 
     def _paginate(self, name: str, limit: int) -> list[Article]:
         """Pagination Scopus : start incrémenté par BATCH_SIZE jusqu'à limit."""
-        # Formatage du nom pour la requête Scopus : "Fervers B" → AU-NAME(Fervers)
-        # L'API Scopus accepte le nom complet : AU-NAME("Béatrice Fervers")
         parts = name.strip().split()
+        
+        # On remet la syntaxe AUTH classique, elle fonctionne très bien !
         if len(parts) >= 2:
-            # "Romain Buono" → AUTH("Fervers Beatrice") — Scopus préfère Nom Prénom
             query = f'AUTH("{parts[-1]} {" ".join(parts[:-1])}")'
         else:
-            # Nom seul → AUTHLASTNAME(Fervers)
-            query = f"AUTHLASTNAME({parts[0]})"
+            query = f'AUTH("{parts[0]}")'
+            
         all_articles: list[Article] = []
         start = 0
 
         while start < limit:
             count = min(self.BATCH_SIZE, limit - start)
             try:
-                resp = requests.get(
+                resp = http_client.get(
                     self.BASE_URL,
                     headers=self._headers(),
                     params={
@@ -1125,7 +1141,7 @@ class ScopusFetcher:
                         "field": (
                             "dc:title,prism:publicationName,prism:doi,"
                             "prism:coverDate,dc:creator,author,prism:issn,"
-                            "eid,citedby-count,authkeywords"
+                            "eid,citedby-count" 
                         ),
                     },
                     timeout=REQUEST_TIMEOUT,
@@ -1192,7 +1208,7 @@ class ScopusFetcher:
         query: str = "TITLE-ABS-KEY(" + " AND ".join(terms_quoted) + ")"
 
         try:
-            resp = requests.get(
+            resp = http_client.get(
                 self.BASE_URL,
                 headers=self._headers(),
                 params={
@@ -1383,7 +1399,7 @@ def fetch_article_by_pmid(
     db = ref_db or _REF_DB
     BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     try:
-        resp = requests.get(
+        resp = http_client.get(
             f"{BASE}/efetch.fcgi",
             params={
                 "db": "pubmed",
@@ -1456,7 +1472,7 @@ def fetch_article_by_doi(
         doi.strip().lstrip("https://doi.org/").lstrip("http://doi.org/").lstrip("doi:")
     )
     try:
-        s_resp = requests.get(
+        s_resp = http_client.get(
             f"{BASE}/esearch.fcgi",
             params={
                 "db": "pubmed",
@@ -1481,7 +1497,7 @@ def fetch_article_by_doi(
 def _nlm_catalog_search(query: str, max_results: int = 8) -> list[dict]:
     BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     try:
-        s_resp = requests.get(
+        s_resp = http_client.get(
             f"{BASE}/esearch.fcgi",
             params={
                 "db": "nlmcatalog",
@@ -1496,7 +1512,7 @@ def _nlm_catalog_search(query: str, max_results: int = 8) -> list[dict]:
         uids = s_resp.json().get("esearchresult", {}).get("idlist", [])
         if not uids:
             return []
-        f_resp = requests.get(
+        f_resp = http_client.get(
             f"{BASE}/efetch.fcgi",
             params={
                 "db": "nlmcatalog",
@@ -1979,7 +1995,7 @@ def _fetch_mesh_translations(title: str) -> dict[str, int]:
     """Interroge PubMed esearch, retourne {terme_mesh: TF}. {} en cas d'échec."""
     BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     try:
-        resp = requests.get(
+        resp = http_client.get(
             f"{BASE}/esearch.fcgi",
             params={
                 "db": "pubmed",
@@ -2015,7 +2031,7 @@ def _get_mesh_doc_count(term: str) -> tuple[str, int]:
         return term, _MESH_IDF_CACHE[term]
     BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     try:
-        resp = requests.get(
+        resp = http_client.get(
             f"{BASE}/esearch.fcgi",
             params={
                 "db": "pubmed",
@@ -2315,6 +2331,13 @@ def suggest_journals_by_title(
                 )
         except Exception as _exc:
             logger.warning("suggest_journals domain_engine.predict(): %s — ignoré", _exc)
+        
+        # ── [OPTIMISATION] Lancement de Scopus en arrière-plan ────────────────
+    scopus_future = None
+    if _domain_level0_terms:
+        _scopus = ScopusFetcher(ref_db=db)
+        scopus_future = background_executor.submit(_scopus.search_by_topic, _domain_level0_terms, 50)
+    # ──────────────────────────────────────────────────────────────────────
 
     # ── Construction de la cascade (niveau 0 si domaine détecté) ─────────────
     _base_cascade = _build_cascade_queries(article_title)
@@ -2334,7 +2357,7 @@ def suggest_journals_by_title(
     for level, (term, field_tag) in enumerate(cascade_queries, start=_level_offset):
         pubmed_term = f"{term}{field_tag}" if field_tag else term
         try:
-            s_resp = requests.get(
+            s_resp = http_client.get(
                 f"{BASE}/esearch.fcgi",
                 params={
                     "db": "pubmed",
@@ -2379,7 +2402,7 @@ def suggest_journals_by_title(
 
     # ── Récupération détails XML ──────────────────────────────────────────────
     try:
-        f_resp = requests.get(
+        f_resp = http_client.get(
             f"{BASE}/efetch.fcgi",
             params={
                 "db": "pubmed",
@@ -2449,6 +2472,8 @@ def suggest_journals_by_title(
         nlm_id = meta["nlm_id"]
         if nlm_id not in journal_agg:
             journal_agg[nlm_id] = {
+                "max_sim": 0.0,          
+                "volume_bonus": 0.0,
                 "weighted_score": 0.0,
                 "count": 0,
                 "journal_name": meta["jrnl_name"],
@@ -2463,7 +2488,19 @@ def suggest_journals_by_title(
             _j_vec: np.ndarray = db._emb_matrix[_nlm_to_idx[nlm_id]]
             _boost = max(float(np.dot(_domain_centroid, _j_vec)), 0.0) * DOMAIN_BOOST_FACTOR
 
-        journal_agg[nlm_id]["weighted_score"] += sim * (1.0 + _boost)
+        # Calcul du score individuel de CET article
+        current_article_score = sim * (1.0 + _boost)
+
+        # 1. On sauvegarde le score le plus haut (La Pépite)
+        if current_article_score > journal_agg[nlm_id]["max_sim"]:
+            journal_agg[nlm_id]["max_sim"] = current_article_score
+            
+        # 2. On accumule un micro-bonus pour le volume (ex: +0.02 par article)
+        journal_agg[nlm_id]["volume_bonus"] += 0.02
+
+        # 3. Le score final est mis à jour
+        journal_agg[nlm_id]["weighted_score"] = journal_agg[nlm_id]["max_sim"] + journal_agg[nlm_id]["volume_bonus"]
+        
         journal_agg[nlm_id]["count"] += 1
         if len(journal_agg[nlm_id]["example_titles"]) < 3:
             journal_agg[nlm_id]["example_titles"].append(
@@ -2471,13 +2508,10 @@ def suggest_journals_by_title(
             )
 
     # ── Enrichissement Scopus thématique ───────────────────────────────
-    # Activé uniquement si le domaine a été détecté (termes niveau 0 disponibles).
-    # Ne touche pas à la recherche auteur/équipe (FederatedSearch.search()).
-    if _domain_level0_terms:
-        _scopus = ScopusFetcher(ref_db=db)
-        _scopus_arts: list[dict] = _scopus.search_by_topic(
-            _domain_level0_terms, limit=50
-        )
+    # On vérifie si la tâche de fond (scopus_future) a ramené des résultats
+    if _domain_level0_terms and scopus_future is not None:
+        _scopus_arts: list[dict] = scopus_future.result() # ← Récupération instantanée !
+        
         if _scopus_arts and model is not None:
             _sc_art_titles = [a["art_title"] for a in _scopus_arts if a["art_title"]]
             if _sc_art_titles:
@@ -2511,6 +2545,8 @@ def suggest_journals_by_title(
 
                     if sc_nlm_id not in journal_agg:
                         journal_agg[sc_nlm_id] = {
+                            "max_sim": 0.0,          
+                            "volume_bonus": 0.0,
                             "weighted_score": 0.0,
                             "count": 0,
                             "journal_name": sc_journal,
@@ -2518,7 +2554,14 @@ def suggest_journals_by_title(
                             "issn": sc_art.get("issn", ""),
                             "example_titles": [],
                         }
-                    journal_agg[sc_nlm_id]["weighted_score"] += sc_sim * (1.0 + _sc_boost)
+                    current_scopus_score = sc_sim * (1.0 + _sc_boost)
+                    
+                    if current_scopus_score > journal_agg[sc_nlm_id]["max_sim"]:
+                        journal_agg[sc_nlm_id]["max_sim"] = current_scopus_score
+                        
+                    journal_agg[sc_nlm_id]["volume_bonus"] += 0.02
+                    journal_agg[sc_nlm_id]["weighted_score"] = journal_agg[sc_nlm_id]["max_sim"] + journal_agg[sc_nlm_id]["volume_bonus"]
+                    
                     journal_agg[sc_nlm_id]["count"] += 1
                     if (
                         len(journal_agg[sc_nlm_id]["example_titles"]) < 3
